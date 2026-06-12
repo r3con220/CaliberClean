@@ -213,6 +213,13 @@ public class MainForm : Form
             return;
         }
 
+        if (idx == 2)
+        {
+            _contentArea.Padding = new Padding(0);
+            _contentArea.Controls.Add(new StartupManagerPanel());
+            return;
+        }
+
         _contentArea.Padding = new Padding(32);
         ShowPlaceholder(idx);
     }
