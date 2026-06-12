@@ -1,127 +1,167 @@
+using System.Runtime.InteropServices;
+
 namespace CaliberClean.Services;
 
-internal record TempFileEntry(string Path, long SizeBytes, DateTime LastModified, bool IsDirectory);
+// ── Category model ────────────────────────────────────────────────────────────
+public record TempCategory(string Id, string Name, string FolderPath);
 
-internal class TempFileCleaner
+// ── Per-category results ──────────────────────────────────────────────────────
+public record ScanResult(string CategoryId, int FileCount, long TotalBytes);
+public record CleanResult(string CategoryId, int Deleted, int Skipped, long BytesFreed);
+
+public class TempFileCleaner
 {
-    private static readonly string[] ScanRoots =
-    [
-        Path.GetTempPath(),
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp"),
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Temp"),
-    ];
+    // ── Shell P/Invoke ────────────────────────────────────────────────────────
+    [DllImport("Shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SHEmptyRecycleBin(IntPtr hwnd, string? pszRootPath, uint dwFlags);
 
-    private static readonly string PrefetchPath =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Prefetch");
+    [DllImport("Shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SHQueryRecycleBin(string? pszRootPath, ref SHQUERYRBINFO pSHQueryRBInfo);
 
-    public async Task<List<TempFileEntry>> ScanAsync(IProgress<string>? progress = null, CancellationToken ct = default)
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SHQUERYRBINFO
     {
-        var results = new List<TempFileEntry>();
-
-        await Task.Run(() =>
-        {
-            var roots = new HashSet<string>(ScanRoots, StringComparer.OrdinalIgnoreCase);
-
-            // Also add Prefetch if accessible
-            if (Directory.Exists(PrefetchPath))
-                roots.Add(PrefetchPath);
-
-            foreach (var root in roots)
-            {
-                ct.ThrowIfCancellationRequested();
-                if (!Directory.Exists(root)) continue;
-
-                progress?.Report($"Scanning {root}…");
-
-                try
-                {
-                    // Top-level files
-                    foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly))
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        try
-                        {
-                            var fi = new FileInfo(file);
-                            results.Add(new TempFileEntry(fi.FullName, fi.Length, fi.LastWriteTime, false));
-                        }
-                        catch { }
-                    }
-
-                    // Top-level subdirectories (listed as single entries — we'll recurse size)
-                    foreach (var dir in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly))
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        try
-                        {
-                            var di = new DirectoryInfo(dir);
-                            long size = GetDirectorySize(di, ct);
-                            results.Add(new TempFileEntry(di.FullName, size, di.LastWriteTime, true));
-                        }
-                        catch { }
-                    }
-                }
-                catch (UnauthorizedAccessException) { }
-                catch (IOException) { }
-            }
-        }, ct);
-
-        return results.OrderByDescending(e => e.SizeBytes).ToList();
+        public int    cbSize;
+        public long   i64Size;
+        public long   i64NumItems;
     }
 
-    public async Task<(int Deleted, int Skipped, long BytesFreed)> CleanAsync(
-        IEnumerable<TempFileEntry> entries,
+    private const uint SHERB_NOCONFIRMATION = 0x00000001;
+    private const uint SHERB_NOPROGRESSUI   = 0x00000002;
+    private const uint SHERB_NOSOUND        = 0x00000004;
+
+    // ── Category catalog ──────────────────────────────────────────────────────
+    public static readonly TempCategory[] Categories =
+    [
+        new("win_temp",  "Windows Temp",
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp")),
+
+        new("user_temp", "User Temp",
+            Environment.GetEnvironmentVariable("TEMP")
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Temp")),
+
+        new("prefetch",  "Prefetch",
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Prefetch")),
+
+        new("recycle",   "Recycle Bin",   ""),   // handled via Shell API
+
+        new("wu_cache",  "Windows Update Cache",
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                         "SoftwareDistribution", "Download")),
+    ];
+
+    // ── Scan ──────────────────────────────────────────────────────────────────
+    public async Task<ScanResult> ScanCategoryAsync(
+        TempCategory cat,
         IProgress<string>? progress = null,
         CancellationToken ct = default)
     {
-        int deleted = 0, skipped = 0;
-        long freed = 0;
-
-        await Task.Run(() =>
+        return await Task.Run(() =>
         {
-            foreach (var entry in entries)
-            {
-                ct.ThrowIfCancellationRequested();
-                progress?.Report($"Deleting {Path.GetFileName(entry.Path)}…");
-                try
-                {
-                    if (entry.IsDirectory)
-                        Directory.Delete(entry.Path, recursive: true);
-                    else
-                        File.Delete(entry.Path);
+            progress?.Report($"Scanning {cat.Name}…");
 
-                    freed += entry.SizeBytes;
-                    deleted++;
-                }
-                catch
+            if (cat.Id == "recycle")
+                return ScanRecycleBin(cat.Id);
+
+            if (!Directory.Exists(cat.FolderPath))
+                return new ScanResult(cat.Id, 0, 0);
+
+            int count = 0;
+            long bytes = 0;
+            try
+            {
+                foreach (var file in Directory.EnumerateFiles(cat.FolderPath, "*", SearchOption.AllDirectories))
                 {
-                    skipped++;
+                    ct.ThrowIfCancellationRequested();
+                    try { var fi = new FileInfo(file); bytes += fi.Length; count++; }
+                    catch { }
                 }
             }
-        }, ct);
+            catch (OperationCanceledException) { throw; }
+            catch { }
 
-        return (deleted, skipped, freed);
+            return new ScanResult(cat.Id, count, bytes);
+        }, ct);
     }
 
-    private static long GetDirectorySize(DirectoryInfo dir, CancellationToken ct)
+    private static ScanResult ScanRecycleBin(string categoryId)
     {
-        long size = 0;
         try
         {
-            foreach (var fi in dir.EnumerateFiles("*", SearchOption.AllDirectories))
-            {
-                ct.ThrowIfCancellationRequested();
-                try { size += fi.Length; } catch { }
-            }
+            var info = new SHQUERYRBINFO { cbSize = Marshal.SizeOf<SHQUERYRBINFO>() };
+            if (SHQueryRecycleBin(null, ref info) == 0)
+                return new ScanResult(categoryId, (int)info.i64NumItems, info.i64Size);
         }
         catch { }
-        return size;
+        return new ScanResult(categoryId, 0, 0);
     }
 
+    // ── Clean ─────────────────────────────────────────────────────────────────
+    public async Task<CleanResult> CleanCategoryAsync(
+        TempCategory cat,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            progress?.Report($"Cleaning {cat.Name}…");
+
+            if (cat.Id == "recycle")
+                return CleanRecycleBin(cat.Id);
+
+            if (!Directory.Exists(cat.FolderPath))
+                return new CleanResult(cat.Id, 0, 0, 0);
+
+            int deleted = 0, skipped = 0;
+            long freed = 0;
+            try
+            {
+                foreach (var file in Directory.EnumerateFiles(cat.FolderPath, "*", SearchOption.AllDirectories))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    try
+                    {
+                        var fi = new FileInfo(file);
+                        long size = fi.Length;
+                        fi.Delete();
+                        freed += size;
+                        deleted++;
+                    }
+                    catch { skipped++; }
+                }
+
+                // Prune empty subdirectories (deepest first so parents empty out)
+                foreach (var dir in Directory.EnumerateDirectories(cat.FolderPath, "*", SearchOption.AllDirectories)
+                                             .OrderByDescending(d => d.Length))
+                {
+                    try { Directory.Delete(dir, false); } catch { }
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { }
+
+            return new CleanResult(cat.Id, deleted, skipped, freed);
+        }, ct);
+    }
+
+    private static CleanResult CleanRecycleBin(string categoryId)
+    {
+        // Snapshot before so we can report what was freed
+        var before = new SHQUERYRBINFO { cbSize = Marshal.SizeOf<SHQUERYRBINFO>() };
+        try { SHQueryRecycleBin(null, ref before); } catch { }
+
+        try { SHEmptyRecycleBin(IntPtr.Zero, null, SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND); }
+        catch { }
+
+        return new CleanResult(categoryId, (int)before.i64NumItems, 0, before.i64Size);
+    }
+
+    // ── Formatting ────────────────────────────────────────────────────────────
     public static string FormatSize(long bytes)
     {
         if (bytes >= 1_073_741_824) return $"{bytes / 1_073_741_824.0:F1} GB";
-        if (bytes >= 1_048_576) return $"{bytes / 1_048_576.0:F1} MB";
-        if (bytes >= 1_024) return $"{bytes / 1_024.0:F0} KB";
+        if (bytes >= 1_048_576)     return $"{bytes / 1_048_576.0:F1} MB";
+        if (bytes >= 1_024)         return $"{bytes / 1_024.0:F0} KB";
         return $"{bytes} B";
     }
 }
