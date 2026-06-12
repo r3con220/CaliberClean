@@ -1,152 +1,178 @@
+using System.Diagnostics;
+
 namespace CaliberClean.Services;
 
-internal record BrowserProfile(string BrowserName, string ProfileName, string CachePath, long SizeBytes);
+// ── Category model ────────────────────────────────────────────────────────────
+public record BrowserCategory(
+    string   Id,
+    string   Name,
+    string   ProcessName,
+    string[] CacheFolders);   // all cache dirs to scan/clean for this browser
 
-internal class BrowserCacheCleaner
+// ── Per-browser results ───────────────────────────────────────────────────────
+public record BrowserScanResult(string BrowserId, int FileCount, long TotalBytes, bool IsRunning);
+public record BrowserCleanResult(string BrowserId, int Deleted, int Skipped, long BytesFreed);
+
+public class BrowserCacheCleaner
 {
-    private static readonly string Local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+    private static readonly string Local   = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
     private static readonly string Roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
 
-    // Each entry: (browser display name, base data dir, relative cache path pattern)
-    // Cache path may contain {profile} placeholder replaced per discovered profile folder
-    private static readonly (string Name, string BaseDir, string CacheSubPath, bool MultiProfile)[] BrowserDefs =
-    [
-        ("Google Chrome",   Path.Combine(Local,   "Google", "Chrome", "User Data"),   "Cache\\Cache_Data", true),
-        ("Microsoft Edge",  Path.Combine(Local,   "Microsoft", "Edge", "User Data"),  "Cache\\Cache_Data", true),
-        ("Brave",           Path.Combine(Local,   "BraveSoftware", "Brave-Browser", "User Data"), "Cache\\Cache_Data", true),
-        ("Opera",           Path.Combine(Roaming, "Opera Software", "Opera Stable"),  "Cache\\Cache_Data", false),
-        ("Vivaldi",         Path.Combine(Local,   "Vivaldi", "User Data"),            "Cache\\Cache_Data", true),
-        ("Firefox",         Path.Combine(Roaming, "Mozilla", "Firefox", "Profiles"),  "cache2\\entries",   true),
-    ];
-
-    public async Task<List<BrowserProfile>> ScanAsync(IProgress<string>? progress = null, CancellationToken ct = default)
+    // ── Browser detection ─────────────────────────────────────────────────────
+    // Returns only browsers that have at least one existing cache folder on disk.
+    public static BrowserCategory[] DetectBrowsers()
     {
-        var results = new List<BrowserProfile>();
+        var list = new List<BrowserCategory>();
 
-        await Task.Run(() =>
-        {
-            foreach (var (name, baseDir, cacheSub, multiProfile) in BrowserDefs)
-            {
-                ct.ThrowIfCancellationRequested();
-                if (!Directory.Exists(baseDir)) continue;
+        TryAdd(list, "chrome",  "Google Chrome",   "chrome",
+            ChromiumFolders(Path.Combine(Local, "Google", "Chrome", "User Data", "Default")));
 
-                progress?.Report($"Scanning {name}…");
+        TryAdd(list, "edge",    "Microsoft Edge",  "msedge",
+            ChromiumFolders(Path.Combine(Local, "Microsoft", "Edge", "User Data", "Default")));
 
-                if (!multiProfile)
-                {
-                    // Single-profile browsers (Opera): baseDir IS the profile dir
-                    var cachePath = Path.Combine(baseDir, cacheSub);
-                    if (Directory.Exists(cachePath))
-                    {
-                        long size = GetDirSize(cachePath, ct);
-                        results.Add(new BrowserProfile(name, "Default", cachePath, size));
-                    }
-                    continue;
-                }
+        TryAdd(list, "firefox", "Mozilla Firefox", "firefox",
+            FirefoxFolders());
 
-                // Multi-profile: enumerate profile folders inside baseDir
-                try
-                {
-                    foreach (var profileDir in Directory.EnumerateDirectories(baseDir))
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        var dirName = Path.GetFileName(profileDir);
-
-                        // Chrome/Edge/Brave: "Default" and "Profile 1", "Profile 2", etc.
-                        // Firefox: random hash dirs, all valid
-                        bool isChromiumProfile = dirName == "Default" || dirName.StartsWith("Profile ");
-                        bool isFirefox = name == "Firefox";
-
-                        if (!isChromiumProfile && !isFirefox) continue;
-
-                        var cachePath = Path.Combine(profileDir, cacheSub);
-                        if (!Directory.Exists(cachePath)) continue;
-
-                        long size = GetDirSize(cachePath, ct);
-                        if (size == 0) continue;
-
-                        // Firefox profile names look like "abc123.default-release" — clean them up
-                        string profileLabel = isFirefox
-                            ? (dirName.Contains('.') ? dirName[(dirName.IndexOf('.') + 1)..] : dirName)
-                            : dirName;
-
-                        results.Add(new BrowserProfile(name, profileLabel, cachePath, size));
-                    }
-                }
-                catch (UnauthorizedAccessException) { }
-                catch (IOException) { }
-            }
-        }, ct);
-
-        return results.OrderByDescending(p => p.SizeBytes).ToList();
+        return [.. list];
     }
 
-    public async Task<(int Cleaned, int Skipped, long BytesFreed)> CleanAsync(
-        IEnumerable<BrowserProfile> profiles,
+    private static void TryAdd(List<BrowserCategory> list, string id, string name, string proc, string[] folders)
+    {
+        if (folders.Length > 0)
+            list.Add(new BrowserCategory(id, name, proc, folders));
+    }
+
+    // Chrome / Edge: sum Cache, Cache2\entries, Code Cache, GPUCache under Default profile
+    private static string[] ChromiumFolders(string defaultProfile)
+    {
+        string[] candidates =
+        [
+            Path.Combine(defaultProfile, "Cache"),
+            Path.Combine(defaultProfile, "Cache2", "entries"),
+            Path.Combine(defaultProfile, "Code Cache"),
+            Path.Combine(defaultProfile, "GPUCache"),
+        ];
+        return candidates.Where(Directory.Exists).ToArray();
+    }
+
+    // Firefox: parse profiles.ini → locate each profile → include cache2 if present
+    private static string[] FirefoxFolders()
+    {
+        var ini = Path.Combine(Roaming, "Mozilla", "Firefox", "profiles.ini");
+        if (!File.Exists(ini)) return [];
+
+        var folders    = new List<string>();
+        string? path   = null;
+        bool isRelative = true;
+
+        void Flush()
+        {
+            if (path is null) return;
+            var dir = isRelative
+                ? Path.Combine(Roaming, "Mozilla", "Firefox", path.Replace('/', Path.DirectorySeparatorChar))
+                : path;
+            var cache = Path.Combine(dir, "cache2");
+            if (Directory.Exists(cache)) folders.Add(cache);
+            path = null; isRelative = true;
+        }
+
+        try
+        {
+            foreach (var raw in File.ReadAllLines(ini))
+            {
+                var line = raw.Trim();
+                if (line.StartsWith('[')) Flush();
+                else if (line.StartsWith("Path=",       StringComparison.OrdinalIgnoreCase)) path       = line[5..];
+                else if (line.StartsWith("IsRelative=", StringComparison.OrdinalIgnoreCase)) isRelative = line[11..] == "1";
+            }
+            Flush();
+        }
+        catch { }
+
+        return [.. folders];
+    }
+
+    // ── Scan ──────────────────────────────────────────────────────────────────
+    public async Task<BrowserScanResult> ScanBrowserAsync(
+        BrowserCategory browser,
         IProgress<string>? progress = null,
         CancellationToken ct = default)
     {
-        int cleaned = 0, skipped = 0;
-        long freed = 0;
-
-        await Task.Run(() =>
+        return await Task.Run(() =>
         {
-            foreach (var profile in profiles)
+            progress?.Report($"Scanning {browser.Name}…");
+            bool running = Process.GetProcessesByName(browser.ProcessName).Length > 0;
+            int count = 0; long bytes = 0;
+
+            foreach (var folder in browser.CacheFolders)
             {
-                ct.ThrowIfCancellationRequested();
-                progress?.Report($"Cleaning {profile.BrowserName} — {profile.ProfileName}…");
-
-                long beforeSize = GetDirSize(profile.CachePath, ct);
-                int filesDeleted = 0;
-
+                if (!Directory.Exists(folder)) continue;
                 try
                 {
-                    foreach (var file in Directory.EnumerateFiles(profile.CachePath, "*", SearchOption.AllDirectories))
+                    foreach (var file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
                     {
                         ct.ThrowIfCancellationRequested();
-                        try { File.Delete(file); filesDeleted++; }
+                        try { var fi = new FileInfo(file); bytes += fi.Length; count++; } catch { }
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch { }
+            }
+
+            return new BrowserScanResult(browser.Id, count, bytes, running);
+        }, ct);
+    }
+
+    // ── Clean ─────────────────────────────────────────────────────────────────
+    // Deletes files inside each cache folder; never removes the folders themselves.
+    public async Task<BrowserCleanResult> CleanBrowserAsync(
+        BrowserCategory browser,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            progress?.Report($"Cleaning {browser.Name}…");
+            int deleted = 0, skipped = 0; long freed = 0;
+
+            foreach (var folder in browser.CacheFolders)
+            {
+                if (!Directory.Exists(folder)) continue;
+                try
+                {
+                    foreach (var file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        try
+                        {
+                            var fi = new FileInfo(file);
+                            long size = fi.Length;
+                            fi.Delete();
+                            freed += size; deleted++;
+                        }
                         catch { skipped++; }
                     }
-
-                    // Remove empty subdirectories
-                    foreach (var dir in Directory.EnumerateDirectories(profile.CachePath, "*", SearchOption.AllDirectories).Reverse())
+                    // Prune empty subdirs — keep the root cache folder itself
+                    foreach (var dir in Directory.EnumerateDirectories(folder, "*", SearchOption.AllDirectories)
+                                                 .OrderByDescending(d => d.Length))
                     {
-                        try { Directory.Delete(dir); } catch { }
+                        try { Directory.Delete(dir, false); } catch { }
                     }
-
-                    freed += beforeSize;
-                    cleaned++;
                 }
-                catch
-                {
-                    skipped++;
-                }
+                catch (OperationCanceledException) { throw; }
+                catch { }
             }
+
+            return new BrowserCleanResult(browser.Id, deleted, skipped, freed);
         }, ct);
-
-        return (cleaned, skipped, freed);
     }
 
-    private static long GetDirSize(string path, CancellationToken ct)
-    {
-        long size = 0;
-        try
-        {
-            foreach (var fi in new DirectoryInfo(path).EnumerateFiles("*", SearchOption.AllDirectories))
-            {
-                ct.ThrowIfCancellationRequested();
-                try { size += fi.Length; } catch { }
-            }
-        }
-        catch { }
-        return size;
-    }
-
+    // ── Formatting ────────────────────────────────────────────────────────────
     public static string FormatSize(long bytes)
     {
         if (bytes >= 1_073_741_824) return $"{bytes / 1_073_741_824.0:F1} GB";
-        if (bytes >= 1_048_576) return $"{bytes / 1_048_576.0:F1} MB";
-        if (bytes >= 1_024) return $"{bytes / 1_024.0:F0} KB";
+        if (bytes >= 1_048_576)     return $"{bytes / 1_048_576.0:F1} MB";
+        if (bytes >= 1_024)         return $"{bytes / 1_024.0:F0} KB";
         return $"{bytes} B";
     }
 }

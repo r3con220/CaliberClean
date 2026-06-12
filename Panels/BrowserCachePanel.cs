@@ -4,29 +4,31 @@ namespace CaliberClean.Panels;
 
 internal class BrowserCachePanel : UserControl
 {
-    private static readonly Color BgColor = Color.FromArgb(0x0D, 0x0D, 0x0D);
-    private static readonly Color PanelColor = Color.FromArgb(0x14, 0x14, 0x14);
-    private static readonly Color TextColor = Color.FromArgb(0xF0, 0xED, 0xE6);
-    private static readonly Color GoldColor = Color.FromArgb(0xFF, 0xCC, 0x01);
-    private static readonly Color ArmyGreen = Color.FromArgb(0x8B, 0x9E, 0x6B);
+    private static readonly Color BgColor     = Color.FromArgb(0x0D, 0x0D, 0x0D);
+    private static readonly Color PanelColor  = Color.FromArgb(0x14, 0x14, 0x14);
+    private static readonly Color RowAltColor = Color.FromArgb(0x11, 0x11, 0x11);
+    private static readonly Color TextColor   = Color.FromArgb(0xF0, 0xED, 0xE6);
+    private static readonly Color GoldColor   = Color.FromArgb(0xFF, 0xCC, 0x01);
+    private static readonly Color ArmyGreen   = Color.FromArgb(0x8B, 0x9E, 0x6B);
     private static readonly Color BorderColor = Color.FromArgb(0x2A, 0x2A, 0x2A);
-    private static readonly Color MutedGray = Color.FromArgb(0x66, 0x66, 0x66);
-    private static readonly Color DangerRed = Color.FromArgb(0xC0, 0x39, 0x2B);
+    private static readonly Color MutedGray   = Color.FromArgb(0x66, 0x66, 0x66);
 
     private readonly BrowserCacheCleaner _cleaner = new();
-    private List<BrowserProfile> _profiles = [];
-    private CancellationTokenSource? _cts;
 
-    private ListView _listView = null!;
-    private Button _scanBtn = null!;
-    private Button _cleanBtn = null!;
-    private Button _selectAllBtn = null!;
-    private Label _summaryLabel = null!;
-    private Label _statusLabel = null!;
+    private BrowserRow[]             _rows    = [];
+    private CancellationTokenSource? _cts;
+    private bool                     _scanDone;
+
+    private Button      _scanBtn   = null!;
+    private Button      _cleanBtn  = null!;
+    private Label       _summary   = null!;
+    private Label       _status    = null!;
+    private ProgressBar _progress  = null!;
+    private Panel       _rowsPanel = null!;
 
     public BrowserCachePanel()
     {
-        Dock = DockStyle.Fill;
+        Dock      = DockStyle.Fill;
         BackColor = BgColor;
         BuildUI();
     }
@@ -35,141 +37,136 @@ internal class BrowserCachePanel : UserControl
     {
         SuspendLayout();
 
-        // --- Toolbar ---
-        var toolbar = new Panel
-        {
-            Dock = DockStyle.Top,
-            Height = 56,
-            BackColor = PanelColor,
-            Padding = new Padding(16, 0, 16, 0),
-        };
-        toolbar.Paint += (s, e) =>
-            e.Graphics.DrawLine(new Pen(BorderColor), 0, toolbar.Height - 1, toolbar.Width, toolbar.Height - 1);
+        // ── Top toolbar ────────────────────────────────────────────────────────
+        var toolbar = MakeBar(DockStyle.Top, 54, isTop: true);
+        toolbar.Padding = new Padding(14, 10, 14, 10);
 
-        _scanBtn = MakeButton("SCAN", GoldColor, 110);
-        _scanBtn.Dock = DockStyle.Left;
+        _scanBtn = MakeBtn("⟳  SCAN", GoldColor, 110);
         _scanBtn.Click += ScanBtn_Click;
 
-        _selectAllBtn = MakeButton("SELECT ALL", Color.FromArgb(0x44, 0x44, 0x44), 110);
-        _selectAllBtn.Dock = DockStyle.Left;
-        _selectAllBtn.Enabled = false;
-        _selectAllBtn.Click += (s, e) => ToggleSelectAll();
-
-        _summaryLabel = new Label
+        _summary = new Label
         {
-            Text = "Click SCAN to detect browser caches",
+            Text      = "Click SCAN to detect installed browsers",
             ForeColor = MutedGray,
             BackColor = Color.Transparent,
-            Dock = DockStyle.Fill,
+            Dock      = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft,
-            Font = new Font("Segoe UI", 9.5f),
-            Padding = new Padding(16, 0, 0, 0),
+            Font      = new Font("Segoe UI", 9.5f),
+            Padding   = new Padding(14, 0, 0, 0),
         };
 
-        toolbar.Controls.Add(_summaryLabel);
-        toolbar.Controls.Add(_selectAllBtn);
+        toolbar.Controls.Add(_summary);
         toolbar.Controls.Add(_scanBtn);
 
-        // --- Warning banner (browsers must be closed) ---
-        var warnPanel = new Panel
+        // ── Column header strip ────────────────────────────────────────────────
+        var header = new Panel
         {
-            Dock = DockStyle.Top,
-            Height = 30,
-            BackColor = Color.FromArgb(0x33, 0x28, 0x00),
+            Dock      = DockStyle.Top,
+            Height    = 26,
+            BackColor = Color.FromArgb(0x10, 0x10, 0x10),
         };
-        warnPanel.Paint += (s, e) =>
-            e.Graphics.DrawLine(new Pen(Color.FromArgb(0xFF, 0xCC, 0x01, 0x40)), 0, warnPanel.Height - 1, warnPanel.Width, warnPanel.Height - 1);
-
-        var warnLabel = new Label
+        header.Paint += (s, e) =>
         {
-            Text = "⚠  Close all browsers before cleaning cache",
-            ForeColor = Color.FromArgb(0xFF, 0xCC, 0x01),
-            BackColor = Color.Transparent,
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Font = new Font("Segoe UI", 8.5f, FontStyle.Regular),
+            using var pen = new Pen(BorderColor);
+            e.Graphics.DrawLine(pen, 0, header.Height - 1, header.Width, header.Height - 1);
         };
-        warnPanel.Controls.Add(warnLabel);
+        AddColHeader(header, "Browser",  80,  ContentAlignment.MiddleLeft);
+        AddColHeader(header, "Files",   220,  ContentAlignment.MiddleRight);
+        AddColHeader(header, "Size",    310,  ContentAlignment.MiddleRight);
+        AddColHeader(header, "Status",  430,  ContentAlignment.MiddleLeft);
 
-        // --- List view ---
-        _listView = new ListView
+        // ── Scrollable rows area ───────────────────────────────────────────────
+        _rowsPanel = new Panel
         {
-            Dock = DockStyle.Fill,
-            View = View.Details,
-            FullRowSelect = true,
-            CheckBoxes = true,
-            BackColor = BgColor,
-            ForeColor = TextColor,
-            BorderStyle = BorderStyle.None,
-            Font = new Font("Segoe UI", 9f),
-            GridLines = false,
-            HeaderStyle = ColumnHeaderStyle.Nonclickable,
+            Dock       = DockStyle.Fill,
+            AutoScroll = true,
+            BackColor  = BgColor,
         };
+        ShowEmpty("Click SCAN to detect installed browsers.");
 
-        _listView.Columns.Add("Browser", 160);
-        _listView.Columns.Add("Profile", 140);
-        _listView.Columns.Add("Cache Size", 100, HorizontalAlignment.Right);
-        _listView.Columns.Add("Cache Path", 400);
-        _listView.ItemChecked += (s, e) => UpdateCleanButton();
-        _listView.Resize += (s, e) =>
+        // ── Progress bar ───────────────────────────────────────────────────────
+        _progress = new ProgressBar
         {
-            int fixed_ = _listView.Columns[0].Width + _listView.Columns[1].Width + _listView.Columns[2].Width + 32;
-            int avail = _listView.Width - fixed_;
-            if (avail > 80) _listView.Columns[3].Width = avail;
+            Dock                  = DockStyle.Bottom,
+            Height                = 3,
+            Style                 = ProgressBarStyle.Marquee,
+            MarqueeAnimationSpeed = 0,
+            BackColor             = PanelColor,
+            ForeColor             = GoldColor,
+            Visible               = false,
         };
 
-        // --- Action bar ---
-        var actionBar = new Panel
-        {
-            Dock = DockStyle.Bottom,
-            Height = 52,
-            BackColor = PanelColor,
-            Padding = new Padding(16, 0, 16, 0),
-        };
-        actionBar.Paint += (s, e) =>
-            e.Graphics.DrawLine(new Pen(BorderColor), 0, 0, actionBar.Width, 0);
+        // ── Bottom action bar ──────────────────────────────────────────────────
+        var actionBar = MakeBar(DockStyle.Bottom, 52, isTop: false);
+        actionBar.Padding = new Padding(14, 9, 14, 9);
 
-        _cleanBtn = MakeButton("CLEAN SELECTED", DangerRed, 170);
-        _cleanBtn.Dock = DockStyle.Right;
+        _cleanBtn = MakeBtn("CLEAN SELECTED", ArmyGreen, 170);
+        _cleanBtn.Dock    = DockStyle.Right;
         _cleanBtn.Enabled = false;
-        _cleanBtn.Click += CleanBtn_Click;
+        _cleanBtn.Click  += CleanBtn_Click;
 
-        _statusLabel = new Label
+        _status = new Label
         {
-            Text = "",
+            Text      = "",
             ForeColor = MutedGray,
             BackColor = Color.Transparent,
-            Dock = DockStyle.Fill,
+            Dock      = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft,
-            Font = new Font("Segoe UI", 9f),
+            Font      = new Font("Segoe UI", 9f),
         };
 
         actionBar.Controls.Add(_cleanBtn);
-        actionBar.Controls.Add(_statusLabel);
+        actionBar.Controls.Add(_status);
 
-        Controls.Add(_listView);
-        Controls.Add(warnPanel);
+        // DockStyle stacking: Fill goes first, then Top items in reverse display order
+        Controls.Add(_rowsPanel);
+        Controls.Add(header);
         Controls.Add(toolbar);
+        Controls.Add(_progress);
         Controls.Add(actionBar);
 
         ResumeLayout();
     }
 
+    // ── Scan ──────────────────────────────────────────────────────────────────
     private async void ScanBtn_Click(object? sender, EventArgs e)
     {
         _cts?.Cancel();
-        _cts = new CancellationTokenSource();
-        SetScanning(true);
-        _listView.Items.Clear();
-        _profiles = [];
+        _cts      = new CancellationTokenSource();
+        _scanDone = false;
 
-        var progress = new Progress<string>(msg => SetStatus(msg));
+        SetBusy(true, "Detecting browsers…");
 
+        var browsers = BrowserCacheCleaner.DetectBrowsers();
+        RebuildRows(browsers);
+
+        if (browsers.Length == 0)
+        {
+            ShowEmpty("No supported browsers found on this machine.");
+            SetBusy(false, null);
+            UpdateSummaryBar();
+            return;
+        }
+
+        var progress = new Progress<string>(SetStatus);
         try
         {
-            _profiles = await _cleaner.ScanAsync(progress, _cts.Token);
-            PopulateList(_profiles);
-            UpdateSummary();
+            foreach (var row in _rows)
+            {
+                _cts.Token.ThrowIfCancellationRequested();
+                row.SetScanning();
+                var result = await _cleaner.ScanBrowserAsync(row.Browser, progress, _cts.Token);
+                row.ApplyScanResult(result);
+                UpdateSummaryBar();
+            }
+
+            _scanDone = true;
+
+            // Default all enabled rows to checked
+            foreach (var r in _rows)
+                if (r.CheckBox.Enabled) r.CheckBox.Checked = true;
+
+            SetStatus($"Scan complete — {_rows.Length} browser(s) detected");
         }
         catch (OperationCanceledException)
         {
@@ -181,26 +178,30 @@ internal class BrowserCachePanel : UserControl
         }
         finally
         {
-            SetScanning(false);
+            SetBusy(false, null);
+            UpdateSummaryBar();
         }
     }
 
+    // ── Clean ─────────────────────────────────────────────────────────────────
     private async void CleanBtn_Click(object? sender, EventArgs e)
     {
-        var toClean = _listView.CheckedItems
-            .Cast<ListViewItem>()
-            .Select(lvi => lvi.Tag as BrowserProfile)
-            .Where(p => p != null)
-            .Cast<BrowserProfile>()
-            .ToList();
+        var toClean = _rows.Where(r => r.CheckBox.Checked && r.ScanResult != null).ToArray();
+        if (toClean.Length == 0) return;
 
-        if (toClean.Count == 0) return;
+        long totalBytes = toClean.Sum(r => r.ScanResult!.TotalBytes);
+        bool anyRunning = toClean.Any(r => r.ScanResult!.IsRunning);
 
-        long totalSize = toClean.Sum(p => p.SizeBytes);
+        string runNote = anyRunning
+            ? "\n\n⚠ One or more browsers are currently running.\nClose them first for best results."
+            : "";
+
         var confirm = MessageBox.Show(
-            $"Clear cache for {toClean.Count} browser profile(s)?\n" +
-            $"Approximately {BrowserCacheCleaner.FormatSize(totalSize)} will be deleted.\n\n" +
-            "Make sure all affected browsers are closed.",
+            $"This will permanently delete cache files for {toClean.Length} " +
+            $"browser{(toClean.Length == 1 ? "" : "s")} " +
+            $"({BrowserCacheCleaner.FormatSize(totalBytes)}).\n\n" +
+            "Locked or in-use files will be skipped automatically." +
+            runNote + "\n\nContinue?",
             "CALIBER CLEAN — Confirm Cache Clear",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning);
@@ -209,22 +210,24 @@ internal class BrowserCachePanel : UserControl
 
         _cts?.Cancel();
         _cts = new CancellationTokenSource();
-        SetCleaning(true);
+        SetBusy(true, "Cleaning…");
 
-        var progress = new Progress<string>(msg => SetStatus(msg));
-
+        var progress = new Progress<string>(SetStatus);
         try
         {
-            var (cleaned, skipped, freed) = await _cleaner.CleanAsync(toClean, progress, _cts.Token);
+            foreach (var row in toClean)
+            {
+                _cts.Token.ThrowIfCancellationRequested();
+                row.SetCleaning();
+                var result = await _cleaner.CleanBrowserAsync(row.Browser, progress, _cts.Token);
+                row.ApplyCleanResult(result);
+            }
 
-            // Re-scan sizes for cleaned profiles and update rows
-            SetStatus("Refreshing sizes…");
-            _profiles = await _cleaner.ScanAsync(null, _cts.Token);
-            PopulateList(_profiles);
-            UpdateSummary();
-
-            string skippedNote = skipped > 0 ? $" ({skipped} file(s) skipped — browser may still be open)" : "";
-            SetStatus($"Freed {BrowserCacheCleaner.FormatSize(freed)} across {cleaned} profile(s){skippedNote}");
+            long freed = toClean.Sum(r => r.CleanResult?.BytesFreed ?? 0);
+            int  del   = toClean.Sum(r => r.CleanResult?.Deleted    ?? 0);
+            int  skip  = toClean.Sum(r => r.CleanResult?.Skipped    ?? 0);
+            string skipNote = skip > 0 ? $", {skip} skipped (in use)" : "";
+            SetStatus($"Done — {BrowserCacheCleaner.FormatSize(freed)} freed, {del} files deleted{skipNote}");
         }
         catch (OperationCanceledException)
         {
@@ -232,134 +235,309 @@ internal class BrowserCachePanel : UserControl
         }
         finally
         {
-            SetCleaning(false);
+            SetBusy(false, null);
+            UpdateSummaryBar();
         }
     }
 
-    private void PopulateList(List<BrowserProfile> profiles)
+    // ── Row management ────────────────────────────────────────────────────────
+    private void RebuildRows(BrowserCategory[] browsers)
     {
-        _listView.BeginUpdate();
-        _listView.Items.Clear();
+        if (InvokeRequired) { Invoke(() => RebuildRows(browsers)); return; }
 
-        string? lastBrowser = null;
-        foreach (var profile in profiles)
+        _rowsPanel.Controls.Clear();
+        _rows = [];
+
+        if (browsers.Length == 0) return;
+
+        _rows = browsers.Select((b, i) => new BrowserRow(b, i)).ToArray();
+
+        // DockStyle.Top: last-added appears at top — add in reverse for correct order
+        foreach (var row in _rows.Reverse())
         {
-            var lvi = new ListViewItem(profile.BrowserName)
-            {
-                Tag = profile,
-                BackColor = BgColor,
-                ForeColor = TextColor,
-                ToolTipText = profile.CachePath,
-            };
-
-            // Dim the browser name on repeated rows for same browser
-            if (profile.BrowserName == lastBrowser)
-                lvi.ForeColor = MutedGray;
-
-            lvi.SubItems.Add(profile.ProfileName);
-            lvi.SubItems.Add(BrowserCacheCleaner.FormatSize(profile.SizeBytes));
-            lvi.SubItems[2].ForeColor = profile.SizeBytes > 104_857_600 ? DangerRed
-                : profile.SizeBytes > 10_485_760 ? GoldColor
-                : ArmyGreen;
-            lvi.SubItems.Add(ShortenPath(profile.CachePath));
-
-            _listView.Items.Add(lvi);
-            lastBrowser = profile.BrowserName;
+            var panel = row.BuildPanel();
+            row.CheckBox.CheckedChanged += (_, _) => UpdateSummaryBar();
+            _rowsPanel.Controls.Add(panel);
         }
-
-        _listView.EndUpdate();
-        _selectAllBtn.Enabled = profiles.Count > 0;
     }
 
-    private void UpdateSummary()
+    private void ShowEmpty(string message)
     {
-        long total = _profiles.Sum(p => p.SizeBytes);
-        int count = _profiles.Count;
-        _summaryLabel.Text = count == 0
-            ? "No browser caches found (or no browsers installed)."
-            : $"{count} profile(s) found — {BrowserCacheCleaner.FormatSize(total)} total cache";
-        _summaryLabel.ForeColor = count > 0 ? TextColor : MutedGray;
-    }
-
-    private void UpdateCleanButton()
-    {
-        int checkedCount = _listView.CheckedItems.Count;
-        _cleanBtn.Enabled = checkedCount > 0;
-        if (checkedCount > 0)
+        if (InvokeRequired) { Invoke(() => ShowEmpty(message)); return; }
+        _rowsPanel.Controls.Clear();
+        _rowsPanel.Controls.Add(new Label
         {
-            long checkedSize = _listView.CheckedItems
-                .Cast<ListViewItem>()
-                .Sum(lvi => (lvi.Tag as BrowserProfile)?.SizeBytes ?? 0);
-            _cleanBtn.Text = $"CLEAN {checkedCount} ({BrowserCacheCleaner.FormatSize(checkedSize)})";
+            Text      = message,
+            ForeColor = MutedGray,
+            BackColor = Color.Transparent,
+            Dock      = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Font      = new Font("Segoe UI", 10f, FontStyle.Italic),
+        });
+    }
+
+    private void UpdateSummaryBar()
+    {
+        if (InvokeRequired) { Invoke(UpdateSummaryBar); return; }
+
+        var selected = _rows.Where(r => r.CheckBox.Checked).ToArray();
+        long bytes   = selected.Sum(r => r.ScanResult?.TotalBytes ?? 0);
+        int  items   = selected.Sum(r => r.ScanResult?.FileCount  ?? 0);
+
+        if (!_scanDone || _rows.Length == 0)
+        {
+            _summary.Text      = "Click SCAN to detect installed browsers";
+            _summary.ForeColor = MutedGray;
+        }
+        else if (selected.Length == 0)
+        {
+            _summary.Text      = "No browsers selected";
+            _summary.ForeColor = MutedGray;
         }
         else
         {
-            _cleanBtn.Text = "CLEAN SELECTED";
+            _summary.Text      = $"{items:N0} files selected — {BrowserCacheCleaner.FormatSize(bytes)} to free";
+            _summary.ForeColor = TextColor;
         }
+
+        _cleanBtn.Enabled = _scanDone && selected.Length > 0;
     }
 
-    private void ToggleSelectAll()
+    private void SetBusy(bool busy, string? msg)
     {
-        bool anyUnchecked = _listView.Items.Cast<ListViewItem>().Any(i => !i.Checked);
-        _listView.BeginUpdate();
-        foreach (ListViewItem item in _listView.Items)
-            item.Checked = anyUnchecked;
-        _listView.EndUpdate();
-        _selectAllBtn.Text = anyUnchecked ? "DESELECT ALL" : "SELECT ALL";
-    }
-
-    private void SetScanning(bool scanning)
-    {
-        _scanBtn.Enabled = !scanning;
-        _scanBtn.Text = scanning ? "SCANNING…" : "SCAN";
-        _selectAllBtn.Enabled = !scanning && _listView.Items.Count > 0;
-        _cleanBtn.Enabled = false;
-        if (!scanning) SetStatus("");
-    }
-
-    private void SetCleaning(bool cleaning)
-    {
-        _cleanBtn.Enabled = !cleaning;
-        _scanBtn.Enabled = !cleaning;
-        _selectAllBtn.Enabled = !cleaning;
+        if (InvokeRequired) { Invoke(() => SetBusy(busy, msg)); return; }
+        _scanBtn.Enabled  = !busy;
+        _scanBtn.Text     = busy ? "…" : "⟳  SCAN";
+        _cleanBtn.Enabled = !busy && _scanDone;
+        _progress.Visible = busy;
+        _progress.MarqueeAnimationSpeed = busy ? 30 : 0;
+        if (msg != null) SetStatus(msg);
     }
 
     private void SetStatus(string text)
     {
         if (InvokeRequired) { Invoke(() => SetStatus(text)); return; }
-        _statusLabel.Text = text;
+        _status.Text = text;
     }
 
-    private static string ShortenPath(string path)
+    // ── UI factories ──────────────────────────────────────────────────────────
+    private static Panel MakeBar(DockStyle dock, int height, bool isTop)
     {
-        string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        string roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        if (path.StartsWith(local, StringComparison.OrdinalIgnoreCase))
-            return "%LOCALAPPDATA%" + path[local.Length..];
-        if (path.StartsWith(roaming, StringComparison.OrdinalIgnoreCase))
-            return "%APPDATA%" + path[roaming.Length..];
-        return path;
+        var p = new Panel { Dock = dock, Height = height, BackColor = PanelColor };
+        p.Paint += (s, e) =>
+        {
+            using var pen = new Pen(BorderColor);
+            int y = isTop ? p.Height - 1 : 0;
+            e.Graphics.DrawLine(pen, 0, y, p.Width, y);
+        };
+        return p;
     }
 
-    private static Button MakeButton(string text, Color backColor, int width)
+    private static void AddColHeader(Panel parent, string text, int x, ContentAlignment align)
     {
-        bool isDark = backColor.GetBrightness() < 0.5f;
+        parent.Controls.Add(new Label
+        {
+            Text      = text.ToUpperInvariant(),
+            ForeColor = MutedGray,
+            BackColor = Color.Transparent,
+            Font      = new Font("Segoe UI", 7.5f, FontStyle.Bold),
+            AutoSize  = false,
+            Width = 110, Height = 26, Left = x, Top = 0,
+            TextAlign = align,
+        });
+    }
+
+    private static Button MakeBtn(string text, Color backColor, int width)
+    {
         var btn = new Button
         {
-            Text = text,
-            Width = width,
-            Height = 34,
-            Anchor = AnchorStyles.Left | AnchorStyles.Top,
+            Text      = text,
+            Width     = width,
+            Height    = 34,
+            Anchor    = AnchorStyles.Left | AnchorStyles.Top,
             FlatStyle = FlatStyle.Flat,
             BackColor = backColor,
-            ForeColor = isDark ? Color.White : Color.FromArgb(0x0D, 0x0D, 0x0D),
-            Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
-            Cursor = Cursors.Hand,
-            Margin = new Padding(0, 0, 8, 0),
+            ForeColor = backColor.GetBrightness() < 0.5f ? Color.White : Color.FromArgb(0x0D, 0x0D, 0x0D),
+            Font      = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+            Cursor    = Cursors.Hand,
             TextAlign = ContentAlignment.MiddleCenter,
         };
-        btn.FlatAppearance.BorderSize = 0;
-        btn.FlatAppearance.MouseOverBackColor = ControlPaint.Light(backColor, 0.1f);
+        btn.FlatAppearance.BorderSize         = 0;
+        btn.FlatAppearance.MouseOverBackColor = ControlPaint.Light(backColor, 0.08f);
         return btn;
+    }
+
+    // ── BrowserRow nested class ───────────────────────────────────────────────
+    private sealed class BrowserRow(BrowserCategory browser, int index)
+    {
+        public BrowserCategory     Browser     { get; } = browser;
+        public BrowserScanResult?  ScanResult  { get; private set; }
+        public BrowserCleanResult? CleanResult { get; private set; }
+        public CheckBox            CheckBox    { get; } = new() { Enabled = false, Checked = false };
+
+        private Label _countLabel  = null!;
+        private Label _sizeLabel   = null!;
+        private Label _statusLabel = null!;
+
+        private static readonly Color TxtColor  = Color.FromArgb(0xF0, 0xED, 0xE6);
+        private static readonly Color Gold      = Color.FromArgb(0xFF, 0xCC, 0x01);
+        private static readonly Color Army      = Color.FromArgb(0x8B, 0x9E, 0x6B);
+        private static readonly Color Muted     = Color.FromArgb(0x66, 0x66, 0x66);
+        private static readonly Color Warn      = Color.FromArgb(0xFF, 0xA5, 0x00);
+        private static readonly Color RowBg     = Color.FromArgb(0x0D, 0x0D, 0x0D);
+        private static readonly Color RowAlt    = Color.FromArgb(0x11, 0x11, 0x11);
+        private static readonly Color Border    = Color.FromArgb(0x2A, 0x2A, 0x2A);
+
+        private static readonly Dictionary<string, (string Icon, Color Accent)> Meta = new()
+        {
+            ["chrome"]  = ("🌐", Color.FromArgb(0x42, 0xA5, 0xF5)),
+            ["edge"]    = ("🔵", Color.FromArgb(0x00, 0x78, 0xD4)),
+            ["firefox"] = ("🦊", Color.FromArgb(0xFF, 0x77, 0x22)),
+        };
+
+        public Panel BuildPanel()
+        {
+            var (icon, accent) = Meta.GetValueOrDefault(Browser.Id, ("🌐", Color.FromArgb(0x4A, 0x9E, 0xFF)));
+
+            var p = new Panel
+            {
+                Dock      = DockStyle.Top,
+                Height    = 58,
+                BackColor = index % 2 == 0 ? RowBg : RowAlt,
+            };
+            p.Paint += (s, e) =>
+            {
+                using var pen = new Pen(Border);
+                e.Graphics.DrawLine(pen, 0, p.Height - 1, p.Width, p.Height - 1);
+            };
+
+            // Checkbox
+            CheckBox.Left = 14; CheckBox.Top = 18;
+            CheckBox.Width = 20; CheckBox.Height = 20;
+            CheckBox.BackColor = Color.Transparent;
+            p.Controls.Add(CheckBox);
+
+            // Accent badge
+            p.Controls.Add(new Label
+            {
+                Text      = icon,
+                BackColor = Color.FromArgb(30, accent.R, accent.G, accent.B),
+                ForeColor = accent,
+                Font      = new Font("Segoe UI Emoji", 14f),
+                AutoSize  = false, Width = 34, Height = 34, Left = 40, Top = 12,
+                TextAlign = ContentAlignment.MiddleCenter,
+            });
+
+            // Browser name
+            p.Controls.Add(new Label
+            {
+                Text      = Browser.Name,
+                ForeColor = TxtColor,
+                BackColor = Color.Transparent,
+                Font      = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                AutoSize  = false, Left = 82, Top = 9, Width = 200, Height = 22,
+                TextAlign = ContentAlignment.MiddleLeft,
+            });
+
+            // Folder count hint
+            p.Controls.Add(new Label
+            {
+                Text      = $"{Browser.CacheFolders.Length} cache folder{(Browser.CacheFolders.Length == 1 ? "" : "s")}",
+                ForeColor = Muted,
+                BackColor = Color.Transparent,
+                Font      = new Font("Segoe UI", 7.5f),
+                AutoSize  = false, Left = 82, Top = 31, Width = 200, Height = 16,
+                TextAlign = ContentAlignment.MiddleLeft,
+            });
+
+            // File count
+            _countLabel = new Label
+            {
+                Text      = "—",
+                ForeColor = Muted,
+                BackColor = Color.Transparent,
+                Font      = new Font("Segoe UI", 9f),
+                AutoSize  = false, Left = 220, Top = 10, Width = 100, Height = 36,
+                TextAlign = ContentAlignment.MiddleRight,
+            };
+            p.Controls.Add(_countLabel);
+
+            // Size
+            _sizeLabel = new Label
+            {
+                Text      = "—",
+                ForeColor = Muted,
+                BackColor = Color.Transparent,
+                Font      = new Font("Segoe UI", 9f, FontStyle.Bold),
+                AutoSize  = false, Left = 315, Top = 10, Width = 100, Height = 36,
+                TextAlign = ContentAlignment.MiddleRight,
+            };
+            p.Controls.Add(_sizeLabel);
+
+            // Status
+            _statusLabel = new Label
+            {
+                Text      = "—",
+                ForeColor = Muted,
+                BackColor = Color.Transparent,
+                Font      = new Font("Segoe UI", 8.5f, FontStyle.Italic),
+                AutoSize  = false, Left = 430, Top = 10, Width = 300, Height = 36,
+                TextAlign = ContentAlignment.MiddleLeft,
+            };
+            p.Controls.Add(_statusLabel);
+
+            return p;
+        }
+
+        public void SetScanning() => SafeSet(_statusLabel, "Scanning…", Muted);
+        public void SetCleaning() => SafeSet(_statusLabel, "Cleaning…", Muted);
+
+        public void ApplyScanResult(BrowserScanResult r)
+        {
+            ScanResult = r;
+
+            SafeSet(_countLabel,
+                r.FileCount > 0 ? $"{r.FileCount:N0} files" : "Empty",
+                r.FileCount > 0 ? TxtColor : Muted);
+
+            SafeSet(_sizeLabel,
+                r.TotalBytes > 0 ? BrowserCacheCleaner.FormatSize(r.TotalBytes) : "—",
+                r.TotalBytes > 0 ? Gold : Muted);
+
+            SafeSet(_statusLabel,
+                r.IsRunning ? $"⚠ Close {Browser.Name.Split(' ')[0]} for best results" : "Ready",
+                r.IsRunning ? Warn : Army);
+
+            SafeEnable(CheckBox, r.FileCount > 0 || r.TotalBytes > 0);
+        }
+
+        public void ApplyCleanResult(BrowserCleanResult r)
+        {
+            CleanResult = r;
+            string skipNote = r.Skipped > 0 ? $", {r.Skipped} skipped" : "";
+            string msg = r.Deleted == 0 && r.Skipped == 0
+                ? "Nothing to clean"
+                : $"Freed {BrowserCacheCleaner.FormatSize(r.BytesFreed)}, {r.Deleted:N0} files deleted{skipNote}";
+
+            SafeSet(_statusLabel, msg, Army);
+            SafeSet(_countLabel,  "0 files", Muted);
+            SafeSet(_sizeLabel,   "—",       Muted);
+
+            ScanResult = new BrowserScanResult(Browser.Id, 0, 0, false);
+            SafeEnable(CheckBox, false);
+        }
+
+        private static void SafeSet(Label lbl, string text, Color color)
+        {
+            if (lbl is null) return;
+            if (lbl.InvokeRequired) { lbl.Invoke(() => SafeSet(lbl, text, color)); return; }
+            lbl.Text = text; lbl.ForeColor = color;
+        }
+
+        private static void SafeEnable(CheckBox cb, bool enabled)
+        {
+            if (cb.InvokeRequired) { cb.Invoke(() => SafeEnable(cb, enabled)); return; }
+            cb.Enabled = enabled;
+        }
     }
 }
