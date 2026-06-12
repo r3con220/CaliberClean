@@ -220,6 +220,13 @@ public class MainForm : Form
             return;
         }
 
+        if (idx == 3)
+        {
+            _contentArea.Padding = new Padding(0);
+            _contentArea.Controls.Add(new DiskUsagePanel());
+            return;
+        }
+
         _contentArea.Padding = new Padding(32);
         ShowPlaceholder(idx);
     }
