@@ -206,6 +206,13 @@ public class MainForm : Form
             return;
         }
 
+        if (idx == 1)
+        {
+            _contentArea.Padding = new Padding(0);
+            _contentArea.Controls.Add(new BrowserCachePanel());
+            return;
+        }
+
         _contentArea.Padding = new Padding(32);
         ShowPlaceholder(idx);
     }
