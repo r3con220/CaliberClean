@@ -1,4 +1,5 @@
 using System.Drawing.Text;
+using CaliberClean.Panels;
 
 namespace CaliberClean;
 
@@ -191,6 +192,21 @@ public class MainForm : Form
             }
         }
 
+        LoadSection(idx);
+    }
+
+    private void LoadSection(int idx)
+    {
+        _contentArea.Controls.Clear();
+
+        if (idx == 0)
+        {
+            _contentArea.Padding = new Padding(0);
+            _contentArea.Controls.Add(new TempFilesPanel());
+            return;
+        }
+
+        _contentArea.Padding = new Padding(32);
         ShowPlaceholder(idx);
     }
 
