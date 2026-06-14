@@ -21,13 +21,15 @@ public class MainForm : Form
 
     private readonly (string Title, string Icon)[] _sections =
     [
-        ("Temp Files", "🗑"),
-        ("Browser Cache", "🌐"),
+        ("Dashboard",       "🏠"),
+        ("Temp Files",      "🗑"),
+        ("Browser Cache",   "🌐"),
         ("Startup Manager", "⚡"),
-        ("Disk Usage", "💾"),
+        ("Disk Usage",      "💾"),
         ("Scheduled Clean", "🕐"),
-        ("Duplicate Finder", "⬡"),
-        ("Large Files", "📦"),
+        ("Duplicate Finder","⬡"),
+        ("Large Files",     "📦"),
+        ("Uninstall Manager","🗂"),
     ];
 
     public MainForm()
@@ -82,7 +84,7 @@ public class MainForm : Form
 
         var versionChip = new Label
         {
-            Text = "v0.5.0",
+            Text = "v0.6.0",
             ForeColor = ArmyGreen,
             BackColor = Color.FromArgb(0x20, 0x20, 0x20),
             AutoSize = true,
@@ -134,7 +136,7 @@ public class MainForm : Form
 
         _statusLabel = new Label
         {
-            Text = "CaliberClean v0.5.0 — Caliber Media LLC",
+            Text = "CaliberClean v0.6.0 — Caliber Media LLC",
             ForeColor = MutedGray,
             BackColor = Color.Transparent,
             Dock = DockStyle.Right,
@@ -201,58 +203,89 @@ public class MainForm : Form
     private void LoadSection(int idx)
     {
         _contentArea.Controls.Clear();
+        _contentArea.Padding = new Padding(0);
 
-        if (idx == 0)
+        switch (idx)
         {
-            _contentArea.Padding = new Padding(0);
-            _contentArea.Controls.Add(new TempFilesPanel());
-            return;
+            case 0:
+                var dashboard = new DashboardPanel();
+                dashboard.QuickCleanRequested += RunQuickClean;
+                dashboard.FullScanRequested   += () => SelectSection(1);
+                _contentArea.Controls.Add(dashboard);
+                break;
+            case 1:
+                _contentArea.Controls.Add(new TempFilesPanel());
+                break;
+            case 2:
+                _contentArea.Controls.Add(new BrowserCachePanel());
+                break;
+            case 3:
+                _contentArea.Controls.Add(new StartupManagerPanel());
+                break;
+            case 4:
+                _contentArea.Controls.Add(new DiskUsagePanel());
+                break;
+            case 5:
+                _contentArea.Controls.Add(new ScheduledCleanPanel());
+                break;
+            case 6:
+                _contentArea.Controls.Add(new DuplicateFinderPanel());
+                break;
+            case 7:
+                _contentArea.Controls.Add(new LargeFilesPanel());
+                break;
+            case 8:
+                _contentArea.Controls.Add(new UninstallManagerPanel());
+                break;
+            default:
+                _contentArea.Padding = new Padding(32);
+                ShowPlaceholder(idx);
+                break;
         }
+    }
 
-        if (idx == 1)
+    private async void RunQuickClean()
+    {
+        try
         {
-            _contentArea.Padding = new Padding(0);
-            _contentArea.Controls.Add(new BrowserCachePanel());
-            return;
-        }
+            using var cts = new CancellationTokenSource();
+            var tempCleaner = new CaliberClean.Services.TempFileCleaner();
+            var browserCleaner = new CaliberClean.Services.BrowserCacheCleaner();
+            long freed = 0;
 
-        if (idx == 2)
+            foreach (var cat in CaliberClean.Services.TempFileCleaner.Categories)
+            {
+                var result = await tempCleaner.CleanCategoryAsync(cat, null, cts.Token);
+                freed += result.BytesFreed;
+            }
+
+            foreach (var b in CaliberClean.Services.BrowserCacheCleaner.DetectBrowsers())
+            {
+                var result = await browserCleaner.CleanBrowserAsync(b, null, cts.Token);
+                freed += result.BytesFreed;
+            }
+
+            CaliberClean.Services.CleanHistory.Save(DateTime.Now, freed);
+
+            var msg = freed > 0
+                ? $"Quick Clean complete — freed {FormatBytes(freed)}"
+                : "Quick Clean complete — nothing to remove";
+            MessageBox.Show(msg, "Quick Clean", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+            if (_selectedNav == 0) LoadSection(0);
+        }
+        catch (Exception ex)
         {
-            _contentArea.Padding = new Padding(0);
-            _contentArea.Controls.Add(new StartupManagerPanel());
-            return;
+            MessageBox.Show($"Quick Clean error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
 
-        if (idx == 3)
-        {
-            _contentArea.Padding = new Padding(0);
-            _contentArea.Controls.Add(new DiskUsagePanel());
-            return;
-        }
-
-        if (idx == 4)
-        {
-            _contentArea.Padding = new Padding(0);
-            _contentArea.Controls.Add(new ScheduledCleanPanel());
-            return;
-        }
-
-        if (idx == 5)
-        {
-            _contentArea.Padding = new Padding(0);
-            _contentArea.Controls.Add(new DuplicateFinderPanel());
-            return;
-        }
-
-        if (idx == 6)
-        {
-            _contentArea.Padding = new Padding(0);
-            _contentArea.Controls.Add(new LargeFilesPanel());
-            return;
-        }
-
-        _contentArea.Padding = new Padding(32);
-        ShowPlaceholder(idx);
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes >= 1_073_741_824) return $"{bytes / 1_073_741_824.0:F1} GB";
+        if (bytes >= 1_048_576)     return $"{bytes / 1_048_576.0:F0} MB";
+        if (bytes >= 1_024)         return $"{bytes / 1_024.0:F0} KB";
+        return $"{bytes} B";
     }
 
     private void ShowPlaceholder(int idx)

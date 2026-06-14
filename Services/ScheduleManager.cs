@@ -73,6 +73,28 @@ public static class ScheduleManager
         return new ScheduleStatus(true, cfg.Frequency);
     }
 
+    public static DateTime? GetNextRun()
+    {
+        var status = GetScheduleStatus();
+        if (!status.IsEnabled || status.Frequency == null) return null;
+
+        var now = DateTime.Now;
+        return status.Frequency switch
+        {
+            CleanFrequency.Daily   => now.Date.AddDays(1).AddHours(3),
+            CleanFrequency.Weekly  => NextWeekday(now, DayOfWeek.Monday).AddHours(3),
+            CleanFrequency.Monthly => new DateTime(now.Year, now.Month, 1).AddMonths(1).AddHours(3),
+            _                      => null,
+        };
+    }
+
+    private static DateTime NextWeekday(DateTime from, DayOfWeek dow)
+    {
+        int daysUntil = ((int)dow - (int)from.DayOfWeek + 7) % 7;
+        if (daysUntil == 0) daysUntil = 7;
+        return from.Date.AddDays(daysUntil);
+    }
+
     public static ScheduleConfig? LoadConfig()
     {
         if (!File.Exists(ConfigPath)) return null;
