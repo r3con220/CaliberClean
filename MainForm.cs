@@ -26,6 +26,8 @@ public class MainForm : Form
         ("Startup Manager", "⚡"),
         ("Disk Usage", "💾"),
         ("Scheduled Clean", "🕐"),
+        ("Duplicate Finder", "⬡"),
+        ("Large Files", "📦"),
     ];
 
     public MainForm()
@@ -80,7 +82,7 @@ public class MainForm : Form
 
         var versionChip = new Label
         {
-            Text = "v0.4.0",
+            Text = "v0.5.0",
             ForeColor = ArmyGreen,
             BackColor = Color.FromArgb(0x20, 0x20, 0x20),
             AutoSize = true,
@@ -132,7 +134,7 @@ public class MainForm : Form
 
         _statusLabel = new Label
         {
-            Text = "CaliberClean v0.4.0 — Caliber Media LLC",
+            Text = "CaliberClean v0.5.0 — Caliber Media LLC",
             ForeColor = MutedGray,
             BackColor = Color.Transparent,
             Dock = DockStyle.Right,
@@ -232,6 +234,20 @@ public class MainForm : Form
         {
             _contentArea.Padding = new Padding(0);
             _contentArea.Controls.Add(new ScheduledCleanPanel());
+            return;
+        }
+
+        if (idx == 5)
+        {
+            _contentArea.Padding = new Padding(0);
+            _contentArea.Controls.Add(new DuplicateFinderPanel());
+            return;
+        }
+
+        if (idx == 6)
+        {
+            _contentArea.Padding = new Padding(0);
+            _contentArea.Controls.Add(new LargeFilesPanel());
             return;
         }
 
