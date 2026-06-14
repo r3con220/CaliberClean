@@ -48,6 +48,7 @@ internal class TempFilesPanel : UserControl
         var toolbar = MakeBar(DockStyle.Top, 54, top: true);
 
         _scanBtn = MakeButton("⟳  SCAN", GoldColor, 110);
+        _scanBtn.Dock   = DockStyle.Right;
         _scanBtn.Click += ScanBtn_Click;
 
         _summary = new Label
@@ -472,7 +473,7 @@ internal class TempFilesPanel : UserControl
             SafeSet(_sizeLabel,  r.TotalBytes > 0 ? TempFileCleaner.FormatSize(r.TotalBytes) : "—",
                     r.TotalBytes > 0 ? GoldColor : MutedGray);
             SafeSet(_statusLabel, "Ready", ArmyGreen);
-            SafeEnable(CheckBox, r.FileCount > 0 || r.TotalBytes > 0);
+            SafeEnable(CheckBox, true);
         }
 
         public void ApplyCleanResult(CleanResult r)
