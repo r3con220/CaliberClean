@@ -270,10 +270,12 @@ public class DashboardPanel : UserControl
             Text = "CaliberClean v0.6.0 — Built by Caliber Media LLC",
             ForeColor = TextColor,
             BackColor = Color.Transparent,
-            AutoSize = true,
+            AutoSize = false,
             Location = new Point(16, 12),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
             Font = new Font("Segoe UI", 10f, FontStyle.Bold),
         };
+        card.SizeChanged += (s, e) => nameLbl.Width = card.Width - 32;
 
         var linkLbl = new LinkLabel
         {
