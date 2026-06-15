@@ -214,14 +214,26 @@ public class DashboardPanel : UserControl
     {
         var card = MakeCard(64);
 
+        var table = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            BackColor = Color.Transparent,
+            Padding = new Padding(16, 14, 16, 14),
+        };
+        table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+        table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+        table.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
         var quickBtn = new Button
         {
             Text = "⚡  QUICK CLEAN",
             FlatStyle = FlatStyle.Flat,
             ForeColor = Color.Black,
             BackColor = GoldColor,
-            Location = new Point(16, 14),
-            Size = new Size(160, 36),
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 0, 6, 0),
             Cursor = Cursors.Hand,
             Font = new Font("Segoe UI", 9f, FontStyle.Bold),
         };
@@ -234,8 +246,8 @@ public class DashboardPanel : UserControl
             FlatStyle = FlatStyle.Flat,
             ForeColor = TextColor,
             BackColor = Color.FromArgb(0x22, 0x22, 0x22),
-            Location = new Point(188, 14),
-            Size = new Size(148, 36),
+            Dock = DockStyle.Fill,
+            Margin = new Padding(6, 0, 0, 0),
             Cursor = Cursors.Hand,
             Font = new Font("Segoe UI", 9f, FontStyle.Bold),
         };
@@ -243,8 +255,9 @@ public class DashboardPanel : UserControl
         fullBtn.FlatAppearance.BorderSize = 1;
         fullBtn.Click += (s, e) => FullScanRequested?.Invoke();
 
-        card.Controls.Add(quickBtn);
-        card.Controls.Add(fullBtn);
+        table.Controls.Add(quickBtn, 0, 0);
+        table.Controls.Add(fullBtn, 1, 0);
+        card.Controls.Add(table);
         return card;
     }
 
