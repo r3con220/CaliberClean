@@ -84,7 +84,7 @@ public class MainForm : Form
 
         var versionChip = new Label
         {
-            Text = "v0.6.0",
+            Text = "v0.7.0",
             ForeColor = ArmyGreen,
             BackColor = Color.FromArgb(0x20, 0x20, 0x20),
             AutoSize = true,
@@ -136,7 +136,7 @@ public class MainForm : Form
 
         _statusLabel = new Label
         {
-            Text = "CaliberClean v0.6.0 — Caliber Media LLC",
+            Text = "CaliberClean v0.7.0 — Caliber Media LLC",
             ForeColor = MutedGray,
             BackColor = Color.Transparent,
             Dock = DockStyle.Right,

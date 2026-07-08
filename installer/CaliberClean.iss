@@ -1,11 +1,11 @@
 ; ═══════════════════════════════════════════════════════
-;  CaliberClean v0.6.0 — Inno Setup Installer Script
+;  CaliberClean v0.7.0 — Inno Setup Installer Script
 ;  Publisher: Caliber Media LLC
 ;  Generated for: net8.0-windows, self-contained win-x64
 ; ═══════════════════════════════════════════════════════
 
 #define AppName      "CaliberClean"
-#define AppVersion   "0.6.0"
+#define AppVersion   "0.7.0"
 #define AppPublisher "Caliber Media LLC"
 #define AppExeName   "CaliberClean.exe"
 #define AppId        "{{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"

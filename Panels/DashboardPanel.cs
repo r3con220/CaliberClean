@@ -17,6 +17,12 @@ public class DashboardPanel : UserControl
     public event Action? QuickCleanRequested;
     public event Action? FullScanRequested;
 
+    private CheckBox _blockAdsToggle        = null!;
+    private Label    _blockAdsStatusLbl     = null!;
+    private Label    _blockAdsEnabledLbl    = null!;
+    private Label    _blockAdsRefreshedLbl  = null!;
+    private Button   _blockAdsRefreshBtn    = null!;
+
     public DashboardPanel()
     {
         Dock = DockStyle.Fill;
@@ -70,6 +76,12 @@ public class DashboardPanel : UserControl
         inner.Controls.Add(MakeSectionLabel("SCHEDULED CLEANING"));
         inner.Controls.Add(MakeSpacer(8));
         inner.Controls.Add(MakeScheduleCard());
+        inner.Controls.Add(MakeSpacer(24));
+
+        // --- Block Ads & Trackers Section ---
+        inner.Controls.Add(MakeSectionLabel("BLOCK ADS && TRACKERS"));
+        inner.Controls.Add(MakeSpacer(8));
+        inner.Controls.Add(MakeBlockAdsCard());
         inner.Controls.Add(MakeSpacer(24));
 
         // --- Quick Actions Section ---
@@ -211,6 +223,212 @@ public class DashboardPanel : UserControl
         return card;
     }
 
+    private Panel MakeBlockAdsCard()
+    {
+        var card = MakeCard(164);
+
+        _blockAdsToggle = new CheckBox
+        {
+            Text      = "Block Ads && Trackers (system-wide, hosts file)",
+            ForeColor = TextColor,
+            BackColor = Color.Transparent,
+            AutoSize  = true,
+            Location  = new Point(16, 12),
+            Font      = new Font("Segoe UI", 10f, FontStyle.Bold),
+            Cursor    = Cursors.Hand,
+        };
+        // Click (not CheckedChanged) — Checked already reflects the requested
+        // new state by the time this fires, and we may need to revert it
+        // programmatically without re-triggering the handler.
+        _blockAdsToggle.Click += BlockAdsToggle_Click;
+
+        // Sits next to the toggle, right-aligned — only meaningful while
+        // enabled, so it's greyed out otherwise (see RefreshBlockAdsUI).
+        _blockAdsRefreshBtn = new Button
+        {
+            Text      = "↻  REFRESH LIST",
+            FlatStyle = FlatStyle.Flat,
+            ForeColor = TextColor,
+            BackColor = Color.FromArgb(0x22, 0x22, 0x22),
+            Location  = new Point(16, 10),
+            Size      = new Size(130, 24),
+            Cursor    = Cursors.Hand,
+            Font      = new Font("Segoe UI", 8f, FontStyle.Bold),
+        };
+        _blockAdsRefreshBtn.FlatAppearance.BorderColor = BorderColor;
+        _blockAdsRefreshBtn.FlatAppearance.BorderSize = 1;
+        _blockAdsRefreshBtn.Click += BlockAdsRefresh_Click;
+        card.SizeChanged += (s, e) => _blockAdsRefreshBtn.Left = card.Width - 16 - _blockAdsRefreshBtn.Width;
+
+        _blockAdsStatusLbl = new Label
+        {
+            ForeColor = MutedGray,
+            BackColor = Color.Transparent,
+            AutoSize  = true,
+            Location  = new Point(16, 40),
+            Font      = new Font("Segoe UI", 8.5f),
+        };
+
+        _blockAdsEnabledLbl = new Label
+        {
+            ForeColor = MutedGray,
+            BackColor = Color.Transparent,
+            AutoSize  = true,
+            Location  = new Point(16, 58),
+            Font      = new Font("Segoe UI", 8f),
+        };
+
+        _blockAdsRefreshedLbl = new Label
+        {
+            ForeColor = MutedGray,
+            BackColor = Color.Transparent,
+            AutoSize  = true,
+            Location  = new Point(16, 76),
+            Font      = new Font("Segoe UI", 8f),
+        };
+
+        var noteLbl = new Label
+        {
+            Text      = "Tip: pair this with uBlock Origin in your browser — hosts-file blocking is system-wide but won't catch everything a browser extension will.",
+            ForeColor = Color.FromArgb(0x55, 0x55, 0x55),
+            BackColor = Color.Transparent,
+            AutoSize  = false,
+            Location  = new Point(16, 106),
+            Height    = 28,
+            Anchor    = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            Font      = new Font("Segoe UI", 7.5f, FontStyle.Italic),
+        };
+        card.SizeChanged += (s, e) => noteLbl.Width = card.Width - 32;
+
+        card.Controls.Add(_blockAdsToggle);
+        card.Controls.Add(_blockAdsRefreshBtn);
+        card.Controls.Add(_blockAdsStatusLbl);
+        card.Controls.Add(_blockAdsEnabledLbl);
+        card.Controls.Add(_blockAdsRefreshedLbl);
+        card.Controls.Add(noteLbl);
+
+        RefreshBlockAdsUI();
+        return card;
+    }
+
+    private void RefreshBlockAdsUI()
+    {
+        var status = HostsBlocklistService.GetStatus();
+
+        _blockAdsToggle.Checked = status.IsEnabled;
+
+        if (status.Error != null)
+        {
+            _blockAdsStatusLbl.Text = status.Error;
+            _blockAdsStatusLbl.ForeColor = Color.FromArgb(0xE6, 0x7E, 0x22); // warning orange, matches disk-usage bar's warn color
+        }
+        else
+        {
+            _blockAdsStatusLbl.Text = status.IsEnabled
+                ? $"Enabled — {status.DomainCount:N0} domains blocked"
+                : "Disabled";
+            _blockAdsStatusLbl.ForeColor = status.IsEnabled ? ArmyGreen : MutedGray;
+        }
+
+        _blockAdsEnabledLbl.Text = status.EnabledAt.HasValue
+            ? $"Enabled: {status.EnabledAt.Value:yyyy-MM-dd HH:mm}"
+            : "Not enabled yet";
+
+        _blockAdsRefreshedLbl.Text = status.LastRefreshedAt.HasValue
+            ? $"Last refreshed: {status.LastRefreshedAt.Value:yyyy-MM-dd HH:mm}"
+            : "List never downloaded";
+
+        // Only meaningful while enabled (no point refreshing a list that
+        // isn't applied) — also enabled on error so Refresh can repair a
+        // malformed block by replacing it with a clean copy.
+        _blockAdsRefreshBtn.Enabled = status.IsEnabled || status.Error != null;
+    }
+
+    private async void BlockAdsToggle_Click(object? sender, EventArgs e)
+    {
+        bool wantEnable = _blockAdsToggle.Checked;
+
+        if (!HostsBlocklistService.IsElevated())
+        {
+            _blockAdsToggle.Checked = !wantEnable; // hold the toggle until an elevated instance actually applies the change
+            PromptForElevation("Blocking ads & trackers system-wide requires administrator privileges to edit the hosts file.");
+            return;
+        }
+
+        _blockAdsToggle.Enabled = false;
+        var progress = new Progress<string>(msg => _blockAdsStatusLbl.Text = msg);
+
+        try
+        {
+            if (wantEnable)
+            {
+                _blockAdsStatusLbl.Text = "Applying…";
+                await HostsBlocklistService.EnableAsync(progress);
+            }
+            else
+            {
+                _blockAdsStatusLbl.Text = "Removing block list…";
+                await Task.Run(HostsBlocklistService.Disable);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(HostsBlocklistService.FriendlyError(ex), "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            _blockAdsToggle.Enabled = true;
+            RefreshBlockAdsUI();
+        }
+    }
+
+    private async void BlockAdsRefresh_Click(object? sender, EventArgs e)
+    {
+        if (!HostsBlocklistService.IsElevated())
+        {
+            PromptForElevation("Refreshing the block list requires administrator privileges.");
+            return;
+        }
+
+        _blockAdsRefreshBtn.Enabled = false;
+        var progress = new Progress<string>(msg => _blockAdsStatusLbl.Text = msg);
+
+        try
+        {
+            await HostsBlocklistService.RefreshAsync(progress);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(HostsBlocklistService.FriendlyError(ex), "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            RefreshBlockAdsUI();
+        }
+    }
+
+    /// Shows a UAC-relaunch prompt. Returns true if the app is about to
+    /// restart elevated (caller should stop what it's doing); false if the
+    /// user declined or cancelled the UAC dialog.
+    private static bool PromptForElevation(string reason)
+    {
+        var result = MessageBox.Show(
+            $"{reason}\n\nRestart CaliberClean as administrator now?",
+            "Administrator Required", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+
+        if (result != DialogResult.Yes) return false;
+
+        if (HostsBlocklistService.RelaunchElevated())
+        {
+            Application.Exit();
+            return true;
+        }
+
+        MessageBox.Show("Elevation was cancelled — no changes were made.", "Administrator Required",
+            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        return false;
+    }
+
     private Panel MakeActionsCard()
     {
         var card = MakeCard(64);
@@ -268,7 +486,7 @@ public class DashboardPanel : UserControl
 
         var nameLbl = new Label
         {
-            Text = "CaliberClean v0.6.0 — Built by Caliber Media LLC",
+            Text = "CaliberClean v0.7.0 — Built by Caliber Media LLC",
             ForeColor = TextColor,
             BackColor = Color.Transparent,
             AutoSize = false,
