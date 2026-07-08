@@ -6,7 +6,7 @@ namespace CaliberClean;
 static class Program
 {
     // Shared with the manual "Check for Updates" button in DashboardPanel.
-    public const string UpdateCheckUrl = "https://raw.githubusercontent.com/r3con220/CaliberClean/main/update.xml";
+    public const string UpdateCheckUrl = "https://raw.githubusercontent.com/r3con220/CaliberClean/master/update.xml";
 
     [STAThread]
     static async Task Main(string[] args)
