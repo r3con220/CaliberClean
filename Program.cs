@@ -1,9 +1,13 @@
+using AutoUpdaterDotNET;
 using CaliberClean.Services;
 
 namespace CaliberClean;
 
 static class Program
 {
+    // Shared with the manual "Check for Updates" button in DashboardPanel.
+    public const string UpdateCheckUrl = "https://raw.githubusercontent.com/r3con220/CaliberClean/main/update.xml";
+
     [STAThread]
     static async Task Main(string[] args)
     {
@@ -13,6 +17,10 @@ static class Program
             await AutoCleanRunner.RunAsync();
             return;
         }
+
+        // Silent, non-blocking check — AutoUpdater shows its own dialog only
+        // if a newer version is actually available; otherwise this is a no-op.
+        AutoUpdater.Start(UpdateCheckUrl);
 
         ApplicationConfiguration.Initialize();
         Application.Run(new MainForm());

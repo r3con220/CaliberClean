@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using AutoUpdaterDotNET;
 using CaliberClean.Services;
 
 namespace CaliberClean.Panels;
@@ -263,7 +264,7 @@ public class DashboardPanel : UserControl
 
     private Panel MakeAboutCard()
     {
-        var card = MakeCard(72);
+        var card = MakeCard(104);
 
         var nameLbl = new Label
         {
@@ -292,8 +293,26 @@ public class DashboardPanel : UserControl
             try { Process.Start(new ProcessStartInfo("https://calibervoice.com") { UseShellExecute = true }); } catch { }
         };
 
+        var updateBtn = new Button
+        {
+            Text      = "↻  CHECK FOR UPDATES",
+            FlatStyle = FlatStyle.Flat,
+            ForeColor = TextColor,
+            BackColor = Color.FromArgb(0x22, 0x22, 0x22),
+            Location  = new Point(16, 64),
+            Size      = new Size(170, 28),
+            Cursor    = Cursors.Hand,
+            Font      = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+        };
+        updateBtn.FlatAppearance.BorderColor = BorderColor;
+        updateBtn.FlatAppearance.BorderSize = 1;
+        // Same call as the silent startup check in Program.cs — AutoUpdater
+        // shows its own dialog if an update is found.
+        updateBtn.Click += (s, e) => AutoUpdater.Start(Program.UpdateCheckUrl);
+
         card.Controls.Add(nameLbl);
         card.Controls.Add(linkLbl);
+        card.Controls.Add(updateBtn);
         return card;
     }
 
