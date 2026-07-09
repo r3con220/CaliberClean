@@ -202,7 +202,7 @@ public class UninstallManagerPanel : UserControl
         {
             var uninstBtn = MakeSmallButton("✕  UNINSTALL", RedColor, 110);
             uninstBtn.Dock = DockStyle.Left;
-            uninstBtn.Click += (s, e) => LaunchUninstaller(prog);
+            uninstBtn.Click += async (s, e) => await LaunchUninstaller(prog);
             btnPanel.Controls.Add(uninstBtn);
         }
 
@@ -268,7 +268,7 @@ public class UninstallManagerPanel : UserControl
         return btn;
     }
 
-    private static void LaunchUninstaller(InstalledProgram prog)
+    private static async Task LaunchUninstaller(InstalledProgram prog)
     {
         var result = MessageBox.Show(
             $"Launch the uninstaller for:\n\n{prog.DisplayName}\n\nThis will run the program's own uninstaller.",
@@ -281,17 +281,31 @@ public class UninstallManagerPanel : UserControl
         try
         {
             var str = prog.UninstallString.Trim();
+            Process? proc;
             // Handle quoted paths
             if (str.StartsWith('"'))
             {
                 var end = str.IndexOf('"', 1);
                 var exe = str[1..end];
                 var args = end + 1 < str.Length ? str[(end + 1)..].Trim() : "";
-                Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = true });
+                proc = Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = true });
             }
             else
             {
-                Process.Start(new ProcessStartInfo { FileName = "cmd.exe", Arguments = $"/c \"{str}\"", UseShellExecute = true });
+                proc = Process.Start(new ProcessStartInfo { FileName = "cmd.exe", Arguments = $"/c \"{str}\"", UseShellExecute = true });
+            }
+
+            // Process.Start not throwing does NOT mean the uninstall is really
+            // proceeding — verified via testing that cancelling the UAC prompt
+            // on a heuristic-elevated (non-manifest) uninstaller does not throw
+            // here. A real interactive uninstaller wizard stays open for a
+            // while; one that exits almost instantly very likely means the
+            // user cancelled the elevation prompt.
+            if (proc is not null && await Task.Run(() => proc.WaitForExit(1500)))
+            {
+                MessageBox.Show(
+                    $"The uninstaller closed almost immediately (exit code {proc.ExitCode}) — it likely didn't run, possibly because the elevation prompt was cancelled.",
+                    "Uninstall", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
         catch (Exception ex)

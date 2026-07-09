@@ -295,9 +295,23 @@ public class ScheduledCleanPanel : UserControl
         var config = BuildConfig();
 
         if (config.Enabled)
-            ScheduleManager.EnableSchedule(config.Frequency, config);
+        {
+            var (success, error) = ScheduleManager.EnableSchedule(config.Frequency, config);
+            if (!success)
+            {
+                SetStatus($"Could not enable: {error}", DangerRed);
+                return;
+            }
+        }
         else
-            ScheduleManager.DisableSchedule();
+        {
+            var (success, error) = ScheduleManager.DisableSchedule();
+            if (!success)
+            {
+                SetStatus($"Could not disable: {error}", DangerRed);
+                return;
+            }
+        }
 
         SetStatus("Schedule saved.", GoldColor);
     }

@@ -31,15 +31,15 @@ public static class ScheduleManager
 
     // ── Public API ────────────────────────────────────────────────────────────
 
-    public static void EnableSchedule(CleanFrequency frequency, ScheduleConfig config)
+    public static (bool Success, string Error) EnableSchedule(CleanFrequency frequency, ScheduleConfig config)
     {
         EnsureDir();
         SaveConfig(config with { Enabled = true, Frequency = frequency });
 
         var exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName ?? "";
-        if (string.IsNullOrEmpty(exePath)) return;
+        if (string.IsNullOrEmpty(exePath)) return (false, "Could not determine the running exe path.");
 
-        // Remove stale task first (ignore errors)
+        // Remove stale task first (ignore errors — it may not exist yet)
         Schtasks($"/delete /tn \"{TaskName}\" /f");
 
         var schedArgs = frequency switch
@@ -50,16 +50,51 @@ public static class ScheduleManager
             _                      => "/sc DAILY /st 03:00",
         };
 
-        Schtasks($"/create /tn \"{TaskName}\" /tr \"\\\"{exePath}\\\" --auto-clean\" " +
-                 $"{schedArgs} /ru \"%USERDOMAIN%\\%USERNAME%\" /rl HIGHEST /f");
+        // /rl HIGHEST requires the *creating* process to be elevated, not just
+        // the account the task runs as — Windows Task Scheduler enforces this
+        // regardless of whose account /ru names. Surface that instead of the
+        // previous silent no-op so callers know the task genuinely wasn't made.
+        //
+        // /ru must be a resolved "%USERDOMAIN%\%USERNAME%" literal never
+        // expands here — ProcessStartInfo launches schtasks.exe directly with
+        // no cmd.exe in between, so %VAR% tokens pass through unexpanded and
+        // schtasks fails with "No mapping between account names and security
+        // IDs was done." Resolve the account name in C# instead.
+        var (exitCode, output) = Schtasks(
+            $"/create /tn \"{TaskName}\" /tr \"\\\"{exePath}\\\" --auto-clean\" " +
+            $"{schedArgs} /ru \"{Environment.UserDomainName}\\{Environment.UserName}\" /rl HIGHEST /f");
+
+        if (exitCode != 0)
+        {
+            var friendly = output.Contains("Access is denied", StringComparison.OrdinalIgnoreCase)
+                ? "Access denied — registering a scheduled task with elevated privileges requires CaliberClean to run as Administrator at least once."
+                : output.Trim();
+            return (false, friendly);
+        }
+
+        return (true, "");
     }
 
-    public static void DisableSchedule()
+    public static (bool Success, string Error) DisableSchedule()
     {
-        Schtasks($"/delete /tn \"{TaskName}\" /f");
+        var (exitCode, output) = Schtasks($"/delete /tn \"{TaskName}\" /f");
 
         var cfg = LoadConfig();
         if (cfg != null) SaveConfig(cfg with { Enabled = false });
+
+        // "Cannot find" just means there was nothing to delete — already the
+        // desired end state, not a real failure. Deleting a task that was
+        // created with /rl HIGHEST also requires an elevated caller (verified
+        // via testing, same constraint as creating it) — surface that case.
+        if (exitCode != 0 && !output.Contains("cannot find", StringComparison.OrdinalIgnoreCase))
+        {
+            var friendly = output.Contains("Access is denied", StringComparison.OrdinalIgnoreCase)
+                ? "Access denied — removing this scheduled task requires CaliberClean to run as Administrator (it was created with elevated privileges)."
+                : output.Trim();
+            return (false, friendly);
+        }
+
+        return (true, "");
     }
 
     public static ScheduleStatus GetScheduleStatus()
@@ -129,7 +164,7 @@ public static class ScheduleManager
         catch { return false; }
     }
 
-    private static void Schtasks(string args)
+    private static (int ExitCode, string Output) Schtasks(string args)
     {
         try
         {
@@ -141,9 +176,16 @@ public static class ScheduleManager
                 RedirectStandardError  = true,
             };
             using var p = Process.Start(psi);
-            p?.WaitForExit();
+            if (p is null) return (-1, "Could not start schtasks.exe.");
+            string stdout = p.StandardOutput.ReadToEnd();
+            string stderr = p.StandardError.ReadToEnd();
+            p.WaitForExit();
+            return (p.ExitCode, string.IsNullOrEmpty(stderr) ? stdout : stderr);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            return (-1, ex.Message);
+        }
     }
 
     private static void EnsureDir() =>
