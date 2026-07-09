@@ -25,7 +25,14 @@ static class Program
         var actionArg = args.FirstOrDefault(a => a.StartsWith("--action=", StringComparison.OrdinalIgnoreCase));
         if (actionArg is not null)
         {
-            await RunActionAsync(actionArg["--action=".Length..]);
+            // Elevated actions (hosts blocklist) are launched via PowerShell's
+            // Start-Process -Verb RunAs from server.js, which cannot capture
+            // this process's stdout across the elevation boundary — so those
+            // callers also pass --result-file, and results get written there
+            // too, in addition to stdout.
+            var resultFileArg = args.FirstOrDefault(a => a.StartsWith("--result-file=", StringComparison.OrdinalIgnoreCase));
+            var resultFile = resultFileArg?["--result-file=".Length..];
+            await RunActionAsync(actionArg["--action=".Length..], resultFile);
             return;
         }
 
@@ -37,7 +44,7 @@ static class Program
         Application.Run(new MainForm());
     }
 
-    private static async Task RunActionAsync(string actionAndParam)
+    private static async Task RunActionAsync(string actionAndParam, string? resultFile = null)
     {
         // Actions that take a parameter are written "name=value" (e.g.
         // delete-large-file=C:\path\to\file) — split on the first '=' only,
@@ -94,6 +101,22 @@ static class Program
 
             case "set-schedule":
                 RunSetSchedule(param);
+                break;
+
+            case "get-blocklist-status":
+                RunGetBlocklistStatus(resultFile);
+                break;
+
+            case "enable-blocklist":
+                await RunEnableBlocklistAsync(resultFile);
+                break;
+
+            case "disable-blocklist":
+                RunDisableBlocklist(resultFile);
+                break;
+
+            case "refresh-blocklist":
+                await RunRefreshBlocklistAsync(resultFile);
                 break;
 
             default:
@@ -552,4 +575,83 @@ static class Program
         bool CleanChrome,
         bool CleanEdge,
         bool CleanFirefox);
+
+    // Writes the JSON result to stdout as usual, and also to --result-file
+    // when one was given — the only way server.js can retrieve a result from
+    // an elevated (Start-Process -Verb RunAs) invocation, since the elevated
+    // child's stdout isn't accessible to the unelevated parent process.
+    private static void WriteResult(object result, string? resultFile)
+    {
+        var json = JsonSerializer.Serialize(result);
+        Console.WriteLine(json);
+        if (!string.IsNullOrEmpty(resultFile))
+        {
+            try { File.WriteAllText(resultFile, json); } catch { /* best effort */ }
+        }
+    }
+
+    private static void RunGetBlocklistStatus(string? resultFile)
+    {
+        try
+        {
+            // Read-only — GetStatus() doesn't call RequireElevated(), so this
+            // action never needs a UAC prompt.
+            var status = HostsBlocklistService.GetStatus();
+            WriteResult(new
+            {
+                success = true,
+                isEnabled = status.IsEnabled,
+                domainCount = status.DomainCount,
+                enabledAt = status.EnabledAt?.ToString("o"),
+                lastRefreshedAt = status.LastRefreshedAt?.ToString("o"),
+                error = status.Error,
+            }, resultFile);
+        }
+        catch (Exception ex)
+        {
+            WriteResult(new { success = false, error = ex.Message }, resultFile);
+        }
+    }
+
+    private static async Task RunEnableBlocklistAsync(string? resultFile)
+    {
+        try
+        {
+            // RequireElevated() inside EnableAsync() passes transparently
+            // here since server.js only reaches this action via an
+            // already-elevated Start-Process -Verb RunAs launch.
+            await HostsBlocklistService.EnableAsync();
+            WriteResult(new { success = true }, resultFile);
+        }
+        catch (Exception ex)
+        {
+            WriteResult(new { success = false, error = HostsBlocklistService.FriendlyError(ex) }, resultFile);
+        }
+    }
+
+    private static void RunDisableBlocklist(string? resultFile)
+    {
+        try
+        {
+            HostsBlocklistService.Disable();
+            WriteResult(new { success = true }, resultFile);
+        }
+        catch (Exception ex)
+        {
+            WriteResult(new { success = false, error = HostsBlocklistService.FriendlyError(ex) }, resultFile);
+        }
+    }
+
+    private static async Task RunRefreshBlocklistAsync(string? resultFile)
+    {
+        try
+        {
+            await HostsBlocklistService.RefreshAsync();
+            WriteResult(new { success = true }, resultFile);
+        }
+        catch (Exception ex)
+        {
+            WriteResult(new { success = false, error = HostsBlocklistService.FriendlyError(ex) }, resultFile);
+        }
+    }
 }
