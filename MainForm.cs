@@ -1,354 +1,257 @@
-using System.Drawing.Text;
+using System.Diagnostics;
 using CaliberClean.Panels;
 
 namespace CaliberClean;
 
+/// Rebuilt from scratch (2026-08-04) to match CaliberHQ's CaliberClean modal
+/// exactly — colors/spacing pulled from CaliberCommandCenter.html + caliber-themes.js,
+/// not eyeballed. See Theme.cs for the palette source.
 public class MainForm : Form
 {
-    private static readonly Color BgColor = Color.FromArgb(0x0D, 0x0D, 0x0D);
-    private static readonly Color PanelColor = Color.FromArgb(0x14, 0x14, 0x14);
-    private static readonly Color TextColor = Color.FromArgb(0xF0, 0xED, 0xE6);
-    private static readonly Color GoldColor = Color.FromArgb(0xFF, 0xCC, 0x01);
-    private static readonly Color ArmyGreen = Color.FromArgb(0x8B, 0x9E, 0x6B);
-    private static readonly Color BorderColor = Color.FromArgb(0x2A, 0x2A, 0x2A);
-    private static readonly Color MutedGray = Color.FromArgb(0x66, 0x66, 0x66);
+    private static readonly (string Title, NavIconKind Icon)[] Sections =
+    [
+        ("Dashboard", NavIconKind.Dashboard),
+        ("Scheduled Clean", NavIconKind.ScheduledClean),
+        ("Disk Usage", NavIconKind.DiskUsage),
+        ("Startup Manager", NavIconKind.StartupManager),
+        ("Uninstall Manager", NavIconKind.UninstallManager),
+        ("Duplicate Finder", NavIconKind.DuplicateFinder),
+        ("Large Files", NavIconKind.LargeFiles),
+        ("Temp Files", NavIconKind.TempFiles),
+        ("Browser Cache", NavIconKind.BrowserCache),
+    ];
 
+    private static readonly string HeaderIconPath = Path.Combine(Application.StartupPath, "Assets", "header-icon.png");
+    private static readonly string InstallerFolderPath = @"C:\Projects\CaliberClean\installer\Output";
+
+    private Palette _pal = Palette.DarkArmy;
+    private bool _isDark = true;
+    private int _selectedNav;
+
+    private Panel _accentStrip = null!;
+    private Panel _headerContent = null!;
     private Panel _navRail = null!;
     private Panel _contentArea = null!;
-    private Label _titleLabel = null!;
-    private Label _statusLabel = null!;
-    private int _selectedNav = 0;
-
-    private readonly (string Title, string Icon)[] _sections =
-    [
-        ("Dashboard",       "🏠"),
-        ("Temp Files",      "🗑"),
-        ("Browser Cache",   "🌐"),
-        ("Startup Manager", "⚡"),
-        ("Disk Usage",      "💾"),
-        ("Scheduled Clean", "🕐"),
-        ("Duplicate Finder","⬡"),
-        ("Large Files",     "📦"),
-        ("Uninstall Manager","🗂"),
-    ];
+    private Panel _footer = null!;
+    private Button _themeToggle = null!;
+    private readonly List<NavButton> _navButtons = [];
 
     public MainForm()
     {
-        InitializeComponent();
+        BuildUI();
         SelectSection(0);
     }
 
-    private void InitializeComponent()
+    private void BuildUI()
     {
         SuspendLayout();
+        Controls.Clear();
+        _navButtons.Clear();
 
-        Text = "CALIBER CLEAN";
-        Size = new Size(960, 640);
-        MinimumSize = new Size(800, 520);
-        BackColor = BgColor;
-        ForeColor = TextColor;
+        Text = "CaliberClean";
+        Size = new Size(1020, 760);
+        MinimumSize = new Size(820, 560);
+        BackColor = _pal.Surface;
         FormBorderStyle = FormBorderStyle.Sizable;
         StartPosition = FormStartPosition.CenterScreen;
 
-        try
-        {
-            Icon = new Icon(Path.Combine(Application.StartupPath, "CaliberClean.ico"));
-        }
-        catch { }
+        try { Icon = new Icon(Path.Combine(Application.StartupPath, "CaliberClean.ico")); } catch { }
 
-        // --- Title bar strip ---
-        var titleStrip = new Panel
-        {
-            Dock = DockStyle.Top,
-            Height = 52,
-            BackColor = PanelColor,
-            Padding = new Padding(16, 0, 16, 0),
-        };
-        titleStrip.Paint += (s, e) =>
-        {
-            e.Graphics.DrawLine(new Pen(BorderColor), 0, titleStrip.Height - 1, titleStrip.Width, titleStrip.Height - 1);
-        };
+        var contentArea = BuildContentArea();
+        var navRail = BuildNavRail();
+        var topBar = BuildTopBar();
+        var footer = BuildFooter();
 
-        _titleLabel = new Label
-        {
-            Text = "CALIBER CLEAN",
-            ForeColor = GoldColor,
-            BackColor = Color.Transparent,
-            AutoSize = true,
-            Dock = DockStyle.Left,
-            TextAlign = ContentAlignment.MiddleLeft,
-            Padding = new Padding(0, 0, 0, 0),
-        };
-        ApplyBebasNeue(_titleLabel, 26f);
-        titleStrip.Controls.Add(_titleLabel);
-
-        var versionChip = new Label
-        {
-            Text = "v0.7.0",
-            ForeColor = ArmyGreen,
-            BackColor = Color.FromArgb(0x20, 0x20, 0x20),
-            AutoSize = true,
-            Dock = DockStyle.Right,
-            TextAlign = ContentAlignment.MiddleRight,
-            Padding = new Padding(8, 0, 8, 0),
-            Font = new Font("Segoe UI", 9f, FontStyle.Regular),
-        };
-        titleStrip.Controls.Add(versionChip);
-
-        // --- Nav rail ---
-        _navRail = new Panel
-        {
-            Dock = DockStyle.Left,
-            Width = 200,
-            BackColor = PanelColor,
-        };
-        _navRail.Paint += (s, e) =>
-        {
-            e.Graphics.DrawLine(new Pen(BorderColor), _navRail.Width - 1, 0, _navRail.Width - 1, _navRail.Height);
-        };
-
-        for (int i = 0; i < _sections.Length; i++)
-        {
-            var idx = i;
-            var btn = CreateNavButton(idx);
-            _navRail.Controls.Add(btn);
-        }
-
-        // --- Content area ---
-        _contentArea = new Panel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = BgColor,
-            Padding = new Padding(32),
-        };
-
-        // --- Status bar ---
-        var statusBar = new Panel
-        {
-            Dock = DockStyle.Bottom,
-            Height = 28,
-            BackColor = PanelColor,
-        };
-        statusBar.Paint += (s, e) =>
-        {
-            e.Graphics.DrawLine(new Pen(BorderColor), 0, 0, statusBar.Width, 0);
-        };
-
-        _statusLabel = new Label
-        {
-            Text = "CaliberClean v0.7.0 — Caliber Media LLC",
-            ForeColor = MutedGray,
-            BackColor = Color.Transparent,
-            Dock = DockStyle.Right,
-            AutoSize = true,
-            TextAlign = ContentAlignment.MiddleRight,
-            Padding = new Padding(0, 0, 12, 0),
-            Font = new Font("Segoe UI", 8.5f, FontStyle.Regular),
-        };
-        statusBar.Controls.Add(_statusLabel);
-
-        Controls.Add(_contentArea);
-        Controls.Add(_navRail);
-        Controls.Add(titleStrip);
-        Controls.Add(statusBar);
+        Controls.Add(contentArea);
+        Controls.Add(navRail);
+        Controls.Add(topBar);
+        Controls.Add(footer);
 
         ResumeLayout();
     }
 
-    private Button CreateNavButton(int idx)
+    // ── Top bar: 2px army accent strip + header row ──────────────────────────
+
+    private Panel BuildTopBar()
     {
-        var (title, icon) = _sections[idx];
+        var topBar = new Panel { Dock = DockStyle.Top, Height = 78, BackColor = _pal.Panel2 };
+
+        _accentStrip = new Panel { Dock = DockStyle.Top, Height = 2, BackColor = _pal.Army };
+
+        _headerContent = new Panel { Dock = DockStyle.Fill, BackColor = _pal.Panel2 };
+
+        PictureBox icon = new()
+        {
+            Location = new Point(20, 14),
+            Size = new Size(48, 48),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            BackColor = Color.Transparent,
+        };
+        try { icon.Image = Image.FromFile(HeaderIconPath); } catch { }
+
+        var title = new TwoToneLabel
+        {
+            PartA = "CALIBER",
+            ColorA = _pal.Gold,
+            PartB = "CLEAN",
+            ColorB = _pal.Army,
+            Location = new Point(76, 20),
+            Font = Fonts.Display(21f),
+        };
+        title.Measure();
+
+        var subtitle = new Label
+        {
+            Text = "PC Cleanup Utility",
+            AutoSize = true,
+            Location = new Point(76, 44),
+            ForeColor = _pal.Muted,
+            BackColor = Color.Transparent,
+            Font = Fonts.Body(12f),
+        };
+
+        _themeToggle = new Button
+        {
+            FlatStyle = FlatStyle.Flat,
+            BackColor = _pal.Panel2,
+            ForeColor = _pal.White,
+            Font = Fonts.UI(10f),
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Padding = new Padding(10, 4, 10, 4),
+            Cursor = Cursors.Hand,
+            Text = _isDark ? "\U0001F319  Dark Army" : "\u2600  Light Army",
+        };
+        _themeToggle.FlatAppearance.BorderColor = _pal.Border2;
+        _themeToggle.FlatAppearance.BorderSize = 1;
+        _themeToggle.Click += (_, _) => ToggleTheme();
+        _headerContent.SizeChanged += (_, _) =>
+            _themeToggle.Location = new Point(_headerContent.Width - _themeToggle.Width - 12, 12);
+
+        _headerContent.Controls.Add(icon);
+        _headerContent.Controls.Add(title);
+        _headerContent.Controls.Add(subtitle);
+        _headerContent.Controls.Add(_themeToggle);
+
+        topBar.Controls.Add(_headerContent);
+        topBar.Controls.Add(_accentStrip);
+        return topBar;
+    }
+
+    // ── Nav rail ───────────────────────────────────────────────────────────
+
+    private Panel BuildNavRail()
+    {
+        _navRail = new Panel { Dock = DockStyle.Left, Width = 198, BackColor = _pal.Panel2, Padding = new Padding(9) };
+        var inner = new Panel { Dock = DockStyle.Fill, BackColor = Color.Transparent };
+
+        for (int i = 0; i < Sections.Length; i++)
+        {
+            var (title, icon) = Sections[i];
+            var btn = new NavButton(i, icon, title, _pal) { IsActive = i == _selectedNav };
+            btn.Click += (_, _) => SelectSection(btn.SectionIndex);
+            _navButtons.Add(btn);
+            inner.Controls.Add(btn);
+        }
+
+        _navRail.Controls.Add(inner);
+        _navRail.Paint += (_, e) => e.Graphics.DrawLine(new Pen(_pal.Border2), _navRail.Width - 1, 0, _navRail.Width - 1, _navRail.Height);
+        return _navRail;
+    }
+
+    // ── Footer: Close + Open Installer Folder ─────────────────────────────
+
+    private Panel BuildFooter()
+    {
+        _footer = new Panel { Dock = DockStyle.Bottom, Height = 50, BackColor = _pal.Panel2 };
+        _footer.Paint += (_, e) => e.Graphics.DrawLine(new Pen(_pal.Border2), 0, 0, _footer.Width, 0);
+
+        var flow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Right,
+            AutoSize = true,
+            WrapContents = false,
+            Padding = new Padding(0, 8, 14, 8),
+            BackColor = Color.Transparent,
+        };
+
+        var closeBtn = MakeFooterButton("Close", primary: false);
+        closeBtn.Click += (_, _) => Close();
+
+        var openInstallerBtn = MakeFooterButton("\U0001F4C2  Open Installer Folder", primary: true);
+        openInstallerBtn.Click += (_, _) => OpenInstallerFolder();
+        openInstallerBtn.Margin = new Padding(8, 0, 0, 0);
+
+        flow.Controls.Add(closeBtn);
+        flow.Controls.Add(openInstallerBtn);
+        _footer.Controls.Add(flow);
+        return _footer;
+    }
+
+    private Button MakeFooterButton(string text, bool primary)
+    {
         var btn = new Button
         {
-            Text = $"  {icon}  {title}",
-            TextAlign = ContentAlignment.MiddleLeft,
+            Text = text,
             FlatStyle = FlatStyle.Flat,
-            ForeColor = Color.FromArgb(0xAA, 0xA8, 0xA2),
-            BackColor = Color.Transparent,
-            Dock = DockStyle.Top,
-            Height = 48,
-            Font = new Font("Segoe UI", 10f, FontStyle.Regular),
+            Font = Fonts.UI(12f, FontStyle.Bold),
+            Padding = new Padding(16, 8, 16, 8),
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Cursor = Cursors.Hand,
-            Tag = idx,
+            BackColor = primary ? _pal.Gold : _pal.Panel2,
+            ForeColor = primary ? _pal.Bg : _pal.White,
         };
-        btn.FlatAppearance.BorderSize = 0;
-        btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(0x1E, 0x1E, 0x1E);
-        btn.FlatAppearance.MouseDownBackColor = Color.FromArgb(0x22, 0x22, 0x22);
-        btn.Click += (s, e) => SelectSection(idx);
+        btn.FlatAppearance.BorderColor = primary ? _pal.Gold : _pal.Border2;
+        btn.FlatAppearance.BorderSize = 1;
         return btn;
     }
+
+    private void OpenInstallerFolder()
+    {
+        try
+        {
+            if (Directory.Exists(InstallerFolderPath))
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{InstallerFolderPath}\"") { UseShellExecute = true });
+            else
+                MessageBox.Show($"Installer folder not found:\n{InstallerFolderPath}", "CaliberClean",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch { }
+    }
+
+    // ── Content area / section switching ──────────────────────────────────
+
+    private Panel BuildContentArea() =>
+        _contentArea = new Panel { Dock = DockStyle.Fill, BackColor = _pal.Surface };
 
     private void SelectSection(int idx)
     {
         _selectedNav = idx;
-
-        // Update nav button states
-        foreach (Control ctrl in _navRail.Controls)
+        foreach (var btn in _navButtons)
         {
-            if (ctrl is Button btn && btn.Tag is int btnIdx)
-            {
-                bool active = btnIdx == idx;
-                btn.ForeColor = active ? GoldColor : Color.FromArgb(0xAA, 0xA8, 0xA2);
-                btn.BackColor = active ? Color.FromArgb(0x1A, 0x1A, 0x1A) : Color.Transparent;
-                if (active)
-                    ApplyBebasNeue(btn, 11f);
-                else
-                    btn.Font = new Font("Segoe UI", 10f, FontStyle.Regular);
-            }
+            btn.IsActive = btn.SectionIndex == idx;
+            btn.Invalidate();
         }
-
         LoadSection(idx);
     }
 
     private void LoadSection(int idx)
     {
         _contentArea.Controls.Clear();
-        _contentArea.Padding = new Padding(0);
-
-        switch (idx)
-        {
-            case 0:
-                var dashboard = new DashboardPanel();
-                dashboard.QuickCleanRequested += RunQuickClean;
-                dashboard.FullScanRequested   += () => SelectSection(1);
-                _contentArea.Controls.Add(dashboard);
-                break;
-            case 1:
-                _contentArea.Controls.Add(new TempFilesPanel());
-                break;
-            case 2:
-                _contentArea.Controls.Add(new BrowserCachePanel());
-                break;
-            case 3:
-                _contentArea.Controls.Add(new StartupManagerPanel());
-                break;
-            case 4:
-                _contentArea.Controls.Add(new DiskUsagePanel());
-                break;
-            case 5:
-                _contentArea.Controls.Add(new ScheduledCleanPanel());
-                break;
-            case 6:
-                _contentArea.Controls.Add(new DuplicateFinderPanel());
-                break;
-            case 7:
-                _contentArea.Controls.Add(new LargeFilesPanel());
-                break;
-            case 8:
-                _contentArea.Controls.Add(new UninstallManagerPanel());
-                break;
-            default:
-                _contentArea.Padding = new Padding(32);
-                ShowPlaceholder(idx);
-                break;
-        }
+        Control panel = idx == 0
+            ? new DashboardPanel(_pal)
+            : new StubPanel(Sections[idx].Title, Sections[idx].Icon, _pal);
+        _contentArea.Controls.Add(panel);
     }
 
-    private async void RunQuickClean()
+    // ── Theme toggle ───────────────────────────────────────────────────────
+
+    private void ToggleTheme()
     {
-        try
-        {
-            using var cts = new CancellationTokenSource();
-            var tempCleaner = new CaliberClean.Services.TempFileCleaner();
-            var browserCleaner = new CaliberClean.Services.BrowserCacheCleaner();
-            long freed = 0;
-
-            foreach (var cat in CaliberClean.Services.TempFileCleaner.Categories)
-            {
-                var result = await tempCleaner.CleanCategoryAsync(cat, null, cts.Token);
-                freed += result.BytesFreed;
-            }
-
-            foreach (var b in CaliberClean.Services.BrowserCacheCleaner.DetectBrowsers())
-            {
-                var result = await browserCleaner.CleanBrowserAsync(b, null, cts.Token);
-                freed += result.BytesFreed;
-            }
-
-            CaliberClean.Services.CleanHistory.Save(DateTime.Now, freed);
-
-            var msg = freed > 0
-                ? $"Quick Clean complete — freed {FormatBytes(freed)}"
-                : "Quick Clean complete — nothing to remove";
-            MessageBox.Show(msg, "Quick Clean", MessageBoxButtons.OK, MessageBoxIcon.Information);
-
-            if (_selectedNav == 0) LoadSection(0);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"Quick Clean error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-    }
-
-    private static string FormatBytes(long bytes)
-    {
-        if (bytes >= 1_073_741_824) return $"{bytes / 1_073_741_824.0:F1} GB";
-        if (bytes >= 1_048_576)     return $"{bytes / 1_048_576.0:F0} MB";
-        if (bytes >= 1_024)         return $"{bytes / 1_024.0:F0} KB";
-        return $"{bytes} B";
-    }
-
-    private void ShowPlaceholder(int idx)
-    {
-        _contentArea.Controls.Clear();
-
-        var (title, icon) = _sections[idx];
-
-        var container = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = Color.Transparent,
-            RowCount = 3,
-            ColumnCount = 1,
-        };
-        container.RowStyles.Add(new RowStyle(SizeType.Percent, 40f));
-        container.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        container.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-
-        var iconLbl = new Label
-        {
-            Text = icon,
-            Font = new Font("Segoe UI Emoji", 40f),
-            ForeColor = Color.FromArgb(0x33, 0x33, 0x33),
-            AutoSize = true,
-            Anchor = AnchorStyles.Bottom,
-            TextAlign = ContentAlignment.BottomCenter,
-        };
-
-        var titleLbl = new Label
-        {
-            Text = title.ToUpperInvariant(),
-            ForeColor = TextColor,
-            AutoSize = true,
-            Anchor = AnchorStyles.Top,
-            TextAlign = ContentAlignment.TopCenter,
-        };
-        ApplyBebasNeue(titleLbl, 28f);
-
-        var comingSoon = new Label
-        {
-            Text = "Coming soon",
-            ForeColor = MutedGray,
-            AutoSize = true,
-            Anchor = AnchorStyles.Top,
-            TextAlign = ContentAlignment.TopCenter,
-            Font = new Font("Segoe UI", 11f, FontStyle.Italic),
-            Padding = new Padding(0, 8, 0, 0),
-        };
-
-        container.Controls.Add(iconLbl, 0, 0);
-        container.Controls.Add(titleLbl, 0, 1);
-        container.Controls.Add(comingSoon, 0, 2);
-
-        _contentArea.Controls.Add(container);
-    }
-
-    private static void ApplyBebasNeue(Control ctrl, float size)
-    {
-        using var fonts = new InstalledFontCollection();
-        bool hasBebas = fonts.Families.Any(f => f.Name.Equals("Bebas Neue", StringComparison.OrdinalIgnoreCase));
-        ctrl.Font = hasBebas
-            ? new Font("Bebas Neue", size, FontStyle.Regular)
-            : new Font("Arial", size, FontStyle.Bold);
+        _isDark = !_isDark;
+        _pal = _isDark ? Palette.DarkArmy : Palette.LightArmy;
+        BuildUI();
+        SelectSection(_selectedNav);
     }
 }
