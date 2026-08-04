@@ -145,7 +145,10 @@ public class MainForm : Form
         _navRail = new Panel { Dock = DockStyle.Left, Width = 198, BackColor = _pal.Panel2, Padding = new Padding(9) };
         var inner = new Panel { Dock = DockStyle.Fill, BackColor = Color.Transparent };
 
-        for (int i = 0; i < Sections.Length; i++)
+        // Added in reverse: for stacked Dock=Top children, the LAST control
+        // added ends up closest to the container's true top edge — confirmed
+        // by screenshot, the opposite of what the naive reading suggests.
+        for (int i = Sections.Length - 1; i >= 0; i--)
         {
             var (title, icon) = Sections[i];
             var btn = new NavButton(i, icon, title, _pal) { IsActive = i == _selectedNav };
@@ -239,9 +242,12 @@ public class MainForm : Form
     private void LoadSection(int idx)
     {
         _contentArea.Controls.Clear();
-        Control panel = idx == 0
-            ? new DashboardPanel(_pal)
-            : new StubPanel(Sections[idx].Title, Sections[idx].Icon, _pal);
+        Control panel = idx switch
+        {
+            0 => new DashboardPanel(_pal),
+            1 => new ScheduledCleanPanel(_pal),
+            _ => new StubPanel(Sections[idx].Title, Sections[idx].Icon, _pal),
+        };
         _contentArea.Controls.Add(panel);
     }
 

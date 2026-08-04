@@ -375,7 +375,7 @@ public sealed class DashboardPanel : UserControl
 
         if (!HostsBlocklistService.IsElevated())
         {
-            PromptForElevation("Blocking ads & trackers system-wide requires administrator privileges to edit the hosts file.");
+            Elevation.PromptIfNeeded("Blocking ads & trackers system-wide requires administrator privileges to edit the hosts file.");
             return;
         }
 
@@ -404,7 +404,7 @@ public sealed class DashboardPanel : UserControl
     {
         if (!HostsBlocklistService.IsElevated())
         {
-            PromptForElevation("Refreshing the block list requires administrator privileges.");
+            Elevation.PromptIfNeeded("Refreshing the block list requires administrator privileges.");
             return;
         }
 
@@ -428,20 +428,4 @@ public sealed class DashboardPanel : UserControl
         }
     }
 
-    private static void PromptForElevation(string reason)
-    {
-        var result = MessageBox.Show(
-            $"{reason}\n\nRestart CaliberClean as administrator now?",
-            "Administrator Required", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-        if (result != DialogResult.Yes) return;
-
-        if (HostsBlocklistService.RelaunchElevated())
-        {
-            Application.Exit();
-            return;
-        }
-
-        MessageBox.Show("Elevation was cancelled — no changes were made.", "Administrator Required",
-            MessageBoxButtons.OK, MessageBoxIcon.Warning);
-    }
 }
