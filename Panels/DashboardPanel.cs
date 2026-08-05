@@ -41,49 +41,13 @@ public sealed class DashboardPanel : UserControl
             BuildBlockAdsCard(),
         };
 
-        int y = 20;
-        foreach (var card in cards)
-        {
-            card.Location = new Point(20, y);
-            y += card.Height + 12;
-            scroll.Controls.Add(card);
-        }
-
-        void LayoutWidths()
-        {
-            int w = Math.Max(200, scroll.ClientSize.Width - 40);
-            foreach (var c in cards) c.Width = w;
-        }
-        scroll.SizeChanged += (_, _) => LayoutWidths();
-        LayoutWidths();
-
+        CardChrome.StackVertically(scroll, cards);
         Controls.Add(scroll);
     }
 
-    // ── Card chrome (.cui-card / .cui-card-label) ─────────────────────────
+    // ── Card chrome (.cui-card / .cui-card-label, 13px) — see CardChrome.cs ──
 
-    private Panel NewCard(int height, string label)
-    {
-        var card = new Panel
-        {
-            Height = height,
-            Width = 400,
-            BackColor = _pal.Panel,
-        };
-        card.Paint += (_, e) => e.Graphics.DrawRectangle(new Pen(_pal.Border2), 0, 0, card.Width - 1, card.Height - 1);
-
-        var lbl = new Label
-        {
-            Text = label.ToUpperInvariant(),
-            UseMnemonic = false, // a bare '&' is a mnemonic marker in WinForms and gets swallowed otherwise
-            Location = new Point(14, 12),
-            AutoSize = true,
-            ForeColor = _pal.Gold,
-            Font = Fonts.UI(13f, FontStyle.Bold),
-        };
-        card.Controls.Add(lbl);
-        return card;
-    }
+    private Panel NewCard(int height, string label) => CardChrome.NewCard(_pal, height, label, 13f);
 
     /// .clean-stat-row: a value label on the left, a pill/button on the right.
     private Label NewStatValue(string text, int y) => new()
@@ -112,13 +76,7 @@ public sealed class DashboardPanel : UserControl
         return pill;
     }
 
-    private void AnchorRight(Control c, Panel card, int rightMargin = 14)
-    {
-        void Reposition() => c.Left = card.Width - rightMargin - c.Width;
-        c.SizeChanged += (_, _) => Reposition();
-        card.SizeChanged += (_, _) => Reposition();
-        Reposition();
-    }
+    private void AnchorRight(Control c, Panel card, int rightMargin = 14) => CardChrome.AnchorRight(c, card, rightMargin);
 
     // ── Disk Usage ─────────────────────────────────────────────────────────
 

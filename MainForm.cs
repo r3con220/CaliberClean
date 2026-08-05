@@ -246,6 +246,8 @@ public class MainForm : Form
         {
             0 => new DashboardPanel(_pal),
             1 => new ScheduledCleanPanel(_pal),
+            2 => new DiskUsagePanel(_pal),
+            3 => new StartupManagerPanel(_pal),
             _ => new StubPanel(Sections[idx].Title, Sections[idx].Icon, _pal),
         };
         _contentArea.Controls.Add(panel);

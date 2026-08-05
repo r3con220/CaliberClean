@@ -43,44 +43,13 @@ public sealed class ScheduledCleanPanel : UserControl
             BuildLastRunSection(),
         };
 
-        int y = 20;
-        foreach (var card in cards)
-        {
-            card.Location = new Point(20, y);
-            y += card.Height + 12;
-            scroll.Controls.Add(card);
-        }
-
-        void LayoutWidths()
-        {
-            int w = Math.Max(200, scroll.ClientSize.Width - 40);
-            foreach (var c in cards) c.Width = w;
-        }
-        scroll.SizeChanged += (_, _) => LayoutWidths();
-        LayoutWidths();
-
+        CardChrome.StackVertically(scroll, cards);
         Controls.Add(scroll);
     }
 
-    // ── .clean-section chrome (same bg/border as .cui-card, smaller 0.68rem label) ──
+    // ── .clean-section chrome (11px label) — see CardChrome.cs ──
 
-    private Panel NewSection(int height, string label)
-    {
-        var section = new Panel { Height = height, Width = 400, BackColor = _pal.Panel };
-        section.Paint += (_, e) => e.Graphics.DrawRectangle(new Pen(_pal.Border2), 0, 0, section.Width - 1, section.Height - 1);
-
-        var lbl = new Label
-        {
-            Text = label.ToUpperInvariant(),
-            UseMnemonic = false,
-            Location = new Point(14, 12),
-            AutoSize = true,
-            ForeColor = _pal.Gold,
-            Font = Fonts.UI(11f, FontStyle.Bold),
-        };
-        section.Controls.Add(lbl);
-        return section;
-    }
+    private Panel NewSection(int height, string label) => CardChrome.NewCard(_pal, height, label, 11f);
 
     private CheckBox NewCheck(string text, Point location, float fontSize = 12f)
     {
