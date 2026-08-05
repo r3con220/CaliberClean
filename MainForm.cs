@@ -248,6 +248,11 @@ public class MainForm : Form
             1 => new ScheduledCleanPanel(_pal),
             2 => new DiskUsagePanel(_pal),
             3 => new StartupManagerPanel(_pal),
+            4 => new UninstallManagerPanel(_pal),
+            5 => new DuplicateFinderPanel(_pal),
+            6 => new LargeFilesPanel(_pal),
+            7 => new TempFilesPanel(_pal),
+            8 => new BrowserCachePanel(_pal),
             _ => new StubPanel(Sections[idx].Title, Sections[idx].Icon, _pal),
         };
         _contentArea.Controls.Add(panel);

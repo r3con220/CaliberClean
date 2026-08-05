@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 using AutoUpdaterDotNET;
 using CaliberClean.Services;
@@ -40,8 +39,26 @@ static class Program
         // if a newer version is actually available; otherwise this is a no-op.
         AutoUpdater.Start(UpdateCheckUrl);
 
+        // Temporary debugging aid: the app had no crash logging at all (unlike
+        // CaliberEngine's startup-error.log), so an unhandled exception in an
+        // async-void UI event handler just silently killed the whole process
+        // with nothing to diagnose. Leaving this in — it's cheap and generally
+        // useful, not just for this one bug.
+        Application.ThreadException += (s, e) => LogCrash(e.Exception);
+        AppDomain.CurrentDomain.UnhandledException += (s, e) => LogCrash(e.ExceptionObject as Exception);
+
         ApplicationConfiguration.Initialize();
         Application.Run(new MainForm());
+    }
+
+    private static void LogCrash(Exception? ex)
+    {
+        try
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "crash-log.txt");
+            File.AppendAllText(path, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {ex}\n\n");
+        }
+        catch { }
     }
 
     private static async Task RunActionAsync(string actionAndParam, string? resultFile = null)
@@ -410,44 +427,10 @@ static class Program
                 Console.WriteLine(JsonSerializer.Serialize(new { success = false, error = "Program not found — the installed list may have changed." }));
                 return;
             }
-            if (string.IsNullOrWhiteSpace(program.UninstallString))
+            var (ok, error) = UninstallManager.LaunchUninstaller(program.UninstallString);
+            if (!ok)
             {
-                Console.WriteLine(JsonSerializer.Serialize(new { success = false, error = "This program has no uninstaller registered." }));
-                return;
-            }
-
-            var str = program.UninstallString.Trim();
-            Process? proc;
-            if (str.StartsWith('"'))
-            {
-                var end = str.IndexOf('"', 1);
-                var exe = str[1..end];
-                var uargs = end + 1 < str.Length ? str[(end + 1)..].Trim() : "";
-                proc = Process.Start(new ProcessStartInfo(exe, uargs) { UseShellExecute = true });
-            }
-            else
-            {
-                // cmd /c blocks until the invoked uninstaller returns, so this
-                // process's exit is still gated on the real uninstaller work
-                // (or its cancellation) even though it isn't the uninstaller itself.
-                proc = Process.Start(new ProcessStartInfo { FileName = "cmd.exe", Arguments = $"/c \"{str}\"", UseShellExecute = true });
-            }
-
-            // Process.Start not throwing does NOT mean the uninstall is really
-            // proceeding — verified via testing that cancelling the UAC prompt
-            // on a heuristic-elevated (non-manifest) uninstaller does not throw
-            // here, unlike the documented behavior for manifest-based elevation.
-            // A real interactive uninstaller wizard stays open for a while; one
-            // that exits almost instantly very likely means the user cancelled
-            // the elevation prompt. This is a heuristic, not a certainty — a
-            // genuinely fast/silent uninstaller could false-positive here.
-            if (proc is not null && proc.WaitForExit(1500))
-            {
-                Console.WriteLine(JsonSerializer.Serialize(new
-                {
-                    success = false,
-                    error = $"The uninstaller closed almost immediately (exit code {proc.ExitCode}) — it likely didn't run, possibly because the elevation prompt was cancelled.",
-                }));
+                Console.WriteLine(JsonSerializer.Serialize(new { success = false, error }));
                 return;
             }
 

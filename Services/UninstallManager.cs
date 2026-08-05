@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Win32;
 
 namespace CaliberClean.Services;
@@ -86,5 +87,54 @@ public static class UninstallManager
         if (kb >= 1_048_576) return $"{kb / 1_048_576.0:F1} GB";
         if (kb >= 1_024)     return $"{kb / 1_024.0:F1} MB";
         return $"{kb} KB";
+    }
+
+    // Moved here from Program.cs's --action=uninstall CLI handler so the GUI's
+    // Uninstall Manager panel can call the exact same logic in-process instead
+    // of duplicating the quoted-path parsing and cancel-detection heuristic.
+    public static (bool Success, string Error) LaunchUninstaller(string uninstallString)
+    {
+        if (string.IsNullOrWhiteSpace(uninstallString))
+            return (false, "This program has no uninstaller registered.");
+
+        try
+        {
+            var str = uninstallString.Trim();
+            Process? proc;
+            if (str.StartsWith('"'))
+            {
+                var end = str.IndexOf('"', 1);
+                var exe = str[1..end];
+                var uargs = end + 1 < str.Length ? str[(end + 1)..].Trim() : "";
+                proc = Process.Start(new ProcessStartInfo(exe, uargs) { UseShellExecute = true });
+            }
+            else
+            {
+                // cmd /c blocks until the invoked uninstaller returns, so this
+                // process's exit is still gated on the real uninstaller work
+                // (or its cancellation) even though it isn't the uninstaller itself.
+                proc = Process.Start(new ProcessStartInfo { FileName = "cmd.exe", Arguments = $"/c \"{str}\"", UseShellExecute = true });
+            }
+
+            // Process.Start not throwing does NOT mean the uninstall is really
+            // proceeding — verified via testing that cancelling the UAC prompt
+            // on a heuristic-elevated (non-manifest) uninstaller does not throw
+            // here, unlike the documented behavior for manifest-based elevation.
+            // A real interactive uninstaller wizard stays open for a while; one
+            // that exits almost instantly very likely means the user cancelled
+            // the elevation prompt. This is a heuristic, not a certainty — a
+            // genuinely fast/silent uninstaller could false-positive here.
+            if (proc is not null && proc.WaitForExit(1500))
+            {
+                return (false,
+                    $"The uninstaller closed almost immediately (exit code {proc.ExitCode}) — it likely didn't run, possibly because the elevation prompt was cancelled.");
+            }
+
+            return (true, "");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
     }
 }

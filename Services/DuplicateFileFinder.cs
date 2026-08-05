@@ -94,4 +94,21 @@ public class DuplicateFileFinder
         if (bytes >= 1_024)         return $"{bytes / 1_024.0:F0} KB";
         return $"{bytes} B";
     }
+
+    /// No existing single-file-delete helper elsewhere in the app to reuse — this is
+    /// the same operation CaliberCommandCenter.html's duplicate/large-files rows both
+    /// call through one shared endpoint for (deleting a file doesn't care which scan
+    /// surfaced it).
+    public static (bool Success, string Error) DeleteFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+            return (true, "");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
 }
